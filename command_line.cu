@@ -50,6 +50,7 @@ static void usage(void)
     fprintf(stderr, "  --disable-rounding                    Disable rounding on the output tables\n");
     fprintf(stderr, "  -b, --batch-size <n>                  Process input in batches of <n> reads\n");
     fprintf(stderr, "  --mmap                                Load reference/dbsnp from system shared memory if present\n");
+    fprintf(stderr, "  --serialize <path>                    Serialize table data to the given output directory (for debugging the postprocess step)\n");
 #if ENABLE_CUDA_BACKEND
     fprintf(stderr, "  --gpu-only                            Use only the CUDA GPU-accelerated backend\n");
 #endif
@@ -128,6 +129,7 @@ void parse_command_line(int argc, char **argv)
             { "disable-rounding", no_argument, NULL, 'n' },
             { "batch-size", required_argument, NULL, 'b' },
             { "mmap", no_argument, NULL, 'm' },
+            { "serialize", required_argument, NULL, 'o' },
 #if ENABLE_CUDA_BACKEND
             { "gpu-only", no_argument, NULL, 'g' },
 #endif
@@ -190,6 +192,11 @@ void parse_command_line(int argc, char **argv)
         case 'm':
             // --mmap
             command_line_options.try_mmap = true;
+            break;
+
+        case 'o':
+            // --serialize
+            command_line_options.serialization_path = strdup(optarg);
             break;
 
 #if ENABLE_CUDA_BACKEND

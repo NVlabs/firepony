@@ -61,6 +61,9 @@ struct runtime_options
     // enable the shared memory reference/dbsnp loader
     bool try_mmap;
 
+    // serialize intermediate data
+    const char *serialization_path;
+
     void disable_all_backends(void)
     {
         enable_cuda = false;
@@ -86,6 +89,8 @@ struct runtime_options
         cpu_threads = -1;
 
         try_mmap = false;
+
+        serialization_path = nullptr;
     }
 };
 

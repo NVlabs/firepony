@@ -43,6 +43,7 @@
 namespace firepony {
 
 template <target_system system> void firepony_process_batch(firepony_context<system>& context, const alignment_batch<system>& batch);
+template <target_system system> void firepony_serialize(firepony_context<system>& context);
 template <target_system system> void firepony_postprocess(firepony_context<system>& context);
 
 template <target_system system_dst, target_system system_src>
@@ -152,6 +153,14 @@ struct firepony_device_pipeline : public firepony_pipeline
 
         default:
             assert(!"can't happen");
+        }
+    }
+
+    virtual void serialize(void) override
+    {
+        if (context->options.serialization_path)
+        {
+            firepony_serialize(*context);
         }
     }
 

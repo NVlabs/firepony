@@ -55,7 +55,6 @@ struct string_database
     static uint32 hash(const char* s);
     static uint32 hash(const std::string& s);
 
-private:
     std::vector<std::string> string_identifiers;
     std::map<uint32, uint32> string_hash_to_id;
 };

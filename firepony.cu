@@ -268,6 +268,7 @@ int main(int argc, char **argv)
         }
     }
 
+    d->serialize();
     d->postprocess();
 
     wall_clock.stop();

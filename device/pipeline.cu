@@ -35,6 +35,7 @@
 #include "../sequence_database.h"
 #include "../table_formatter.h"
 #include "../variant_database.h"
+#include "../serialization.h"
 
 #include "baq.h"
 #include "firepony_context.h"
@@ -197,6 +198,37 @@ static void output_header(firepony_context<system>& context)
         fmt.end_table();
     }
 }
+
+template <target_system system>
+static void serialize_table(covariate_observation_table<system>& table, std::string output)
+{
+    covariate_observation_table<host> h_table;
+    h_table.copyfrom(table);
+
+    size_t size = serialization::serialized_size(h_table.keys) +
+                  serialization::serialized_size(h_table.values);
+
+    void *mem = malloc(size);
+    void *ptr = mem;
+
+    ptr = serialization::serialize(ptr, h_table.keys);
+    ptr = serialization::serialize(ptr, h_table.values);
+
+    FILE *fp = fopen(output.c_str(), "wb");
+    fwrite(mem, size, 1, fp);
+    fclose(fp);
+
+    free(mem);
+}
+
+template <target_system system>
+void firepony_serialize(firepony_context<system>& context)
+{
+    serialize_table(context.covariates.quality, std::string(context.options.serialization_path) + "/quality.table");
+    serialize_table(context.covariates.cycle, std::string(context.options.serialization_path) + "/cycle.table");
+    serialize_table(context.covariates.context, std::string(context.options.serialization_path) + "/context.table");
+}
+INSTANTIATE(firepony_serialize);
 
 template <target_system system>
 void firepony_postprocess(firepony_context<system>& context)
