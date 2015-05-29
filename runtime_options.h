@@ -31,6 +31,11 @@
 
 namespace firepony {
 
+typedef enum {
+    BAQ_SINGLE_PRECISION,
+    BAQ_DOUBLE_PRECISION
+} baq_precision;
+
 struct runtime_options
 {
     // file names for reference, SNP database and input files
@@ -61,6 +66,8 @@ struct runtime_options
     // enable the shared memory reference/dbsnp loader
     bool try_mmap;
 
+    baq_precision baq_float_precision;
+
     void disable_all_backends(void)
     {
         enable_cuda = false;
@@ -86,8 +93,9 @@ struct runtime_options
         cpu_threads = -1;
 
         try_mmap = false;
+
+        baq_float_precision = BAQ_DOUBLE_PRECISION;
     }
 };
 
 } // namespace firepony
-

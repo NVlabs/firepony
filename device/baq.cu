@@ -78,10 +78,18 @@ static CUDA_HOST_DEVICE inline uint32 abs(int32 val)
     return (val < 0 ? uint32(-val) : uint32(val));
 }
 
-template <target_system system>
+template <typename float_type, target_system system>
 struct compute_hmm_windows : public lambda<system>
 {
-    LAMBDA_INHERIT;
+    LAMBDA_INHERIT_MEMBERS;
+
+    typename baq_context_internal<float_type, system>::view baq;
+
+    compute_hmm_windows(typename firepony_context<system>::view ctx,
+                        typename baq_context_internal<float_type, system>::view baq,
+                        const typename alignment_batch_device<system>::const_view batch)
+        : lambda<system>(ctx, batch), baq(baq)
+    { }
 
     CUDA_HOST_DEVICE void operator() (const uint32 read_index)
     {
@@ -144,13 +152,13 @@ struct compute_hmm_windows : public lambda<system>
 
             // emit an invalid HMM window
             // this will cause this read to be removed from the active read list
-            ctx.baq.hmm_reference_windows[read_index] = make_short2(short(-1), short(-1));
+            baq.hmm_reference_windows[read_index] = make_short2(short(-1), short(-1));
 
             return;
         }
 
         // write out the result
-        ctx.baq.hmm_reference_windows[read_index] = hmm_reference_window;
+        baq.hmm_reference_windows[read_index] = hmm_reference_window;
 
         // compute the band width
         int referenceLen;
@@ -174,19 +182,27 @@ struct compute_hmm_windows : public lambda<system>
             bandWidth = abs(referenceLen - queryLen);
         }
 
-        ctx.baq.bandwidth[read_index] = bandWidth;
+        baq.bandwidth[read_index] = bandWidth;
     }
 };
 
-template <target_system system>
+template <typename float_type, target_system system>
 struct hmm_window_valid : public lambda<system>
 {
-    LAMBDA_INHERIT;
+    LAMBDA_INHERIT_MEMBERS;
+
+    typename baq_context_internal<float_type, system>::view baq;
+
+    hmm_window_valid(typename firepony_context<system>::view ctx,
+                     typename baq_context_internal<float_type, system>::view baq,
+                     const typename alignment_batch_device<system>::const_view batch)
+        : lambda<system>(ctx, batch), baq(baq)
+    { }
 
     CUDA_HOST_DEVICE bool operator() (const uint32 read_index)
     {
-        if (ctx.baq.hmm_reference_windows[read_index].x == short(-1) &&
-            ctx.baq.hmm_reference_windows[read_index].y == short(-1))
+        if (baq.hmm_reference_windows[read_index].x == short(-1) &&
+            baq.hmm_reference_windows[read_index].y == short(-1))
         {
             return false;
         } else {
@@ -624,15 +640,17 @@ struct hmm_glocal_lmem : public lambda<system>
 };
 #endif
 
-template <target_system system>
+template <typename float_type, target_system system>
 struct hmm_glocal : public lambda<system>
 {
+    typename baq_context_internal<float_type, system>::view baq;
     typename vector<system, uint32>::view baq_state;
 
     hmm_glocal(typename firepony_context<system>::view ctx,
+               typename baq_context_internal<float_type, system>::view baq,
                const typename alignment_batch_device<system>::const_view batch,
                typename vector<system, uint32>::view baq_state)
-        : lambda<system>(ctx, batch), baq_state(baq_state)
+        : lambda<system>(ctx, batch), baq(baq), baq_state(baq_state)
     { }
 
     int bandWidth, bandWidth2;
@@ -640,13 +658,13 @@ struct hmm_glocal : public lambda<system>
     int referenceStart, referenceLength;
     int queryStart, queryEnd, queryLen;
 
-    double *forwardMatrix;
-    double *backwardMatrix;
-    double *scalingFactors;
+    float_type *forwardMatrix;
+    float_type *backwardMatrix;
+    float_type *scalingFactors;
 
-    double sM, sI, bM, bI;
+    float_type sM, sI, bM, bI;
 
-    double m[9];
+    float_type m[9];
 
     stream_dna16<system> referenceBases;
     stream_dna16<system> queryBases;
@@ -668,12 +686,12 @@ struct hmm_glocal : public lambda<system>
         const CRQ_index idx = batch.crq_index(read_index);
 
         // set up matrix and scaling factor pointers
-        forwardMatrix = &ctx.baq.forward[matrix_index];
-        backwardMatrix = &ctx.baq.backward[matrix_index];
-        scalingFactors = &ctx.baq.scaling[scaling_index];
+        forwardMatrix = &baq.forward[matrix_index];
+        backwardMatrix = &baq.backward[matrix_index];
+        scalingFactors = &baq.scaling[scaling_index];
 
         // get the windows for the current read
-        const auto& hmm_reference_window = ctx.baq.hmm_reference_windows[read_index];
+        const auto& hmm_reference_window = baq.hmm_reference_windows[read_index];
         const ushort2& read_window_clipped = ctx.cigar.read_window_clipped[read_index];
 
         referenceStart = hmm_reference_window.x;
@@ -683,7 +701,7 @@ struct hmm_glocal : public lambda<system>
         queryEnd = read_window_clipped.y;
         queryLen = queryEnd - queryStart + 1;
 
-        bandWidth = ctx.baq.bandwidth[read_index];
+        bandWidth = baq.bandwidth[read_index];
         bandWidth2 = bandWidth * 2 + 1;
 
         // initialize transition probabilities
@@ -758,12 +776,12 @@ struct hmm_glocal : public lambda<system>
         return (read_len + 1) * (bandWidth2 * 3 + 6);
     }
 
-    CUDA_HOST_DEVICE static double qual2prob(uint8 q)
+    CUDA_HOST_DEVICE static float_type qual2prob(uint8 q)
     {
         return pow(10.0, -q/10.0);
     }
 
-    CUDA_HOST_DEVICE static double calcEpsilon(uint8 ref, uint8 read, uint8 qualB)
+    CUDA_HOST_DEVICE static float_type calcEpsilon(uint8 ref, uint8 read, uint8 qualB)
     {
         if (ref == from_nvbio::AlphabetTraits<from_nvbio::DNA_IUPAC>::N ||
             read == from_nvbio::AlphabetTraits<from_nvbio::DNA_IUPAC>::N)
@@ -771,8 +789,8 @@ struct hmm_glocal : public lambda<system>
             return 1.0;
         }
 
-        double qual = qual2prob(qualB < MIN_BASE_QUAL ? MIN_BASE_QUAL : qualB);
-        double e = (ref == read ? 1 - qual : qual * EM);
+        float_type qual = qual2prob(qualB < MIN_BASE_QUAL ? MIN_BASE_QUAL : qualB);
+        float_type e = (ref == read ? 1 - qual : qual * EM);
         return e;
     }
 
@@ -809,8 +827,8 @@ struct hmm_glocal : public lambda<system>
         forwardMatrix[off(0, set_u(bandWidth, 0, 0))] = 1.0;
         scalingFactors[0] = 1.0;
         { // f[1]
-            double *fi = &forwardMatrix[off(1)];
-            double sum;
+            float_type *fi = &forwardMatrix[off(1)];
+            float_type sum;
             int beg = 1;
             int end = referenceLength < bandWidth + 1? referenceLength : bandWidth + 1;
             int _beg, _end;
@@ -819,7 +837,7 @@ struct hmm_glocal : public lambda<system>
             for (k = beg; k <= end; ++k)
             {
                 int u;
-                double e = calcEpsilon(referenceBases[k-1], queryBases[queryStart], inputQualities[queryStart]);
+                float_type e = calcEpsilon(referenceBases[k-1], queryBases[queryStart], inputQualities[queryStart]);
 //                printf("referenceBases[%d-1] = %c inputQualities[%d] = %d queryBases[%d] = %c -> e = %.4f\n",
 ////                       read_index,
 //                       k,
@@ -850,9 +868,9 @@ struct hmm_glocal : public lambda<system>
         // f[2..l_query]
         for (i = 2; i <= queryLen; ++i)
         {
-            double *fi = &forwardMatrix[off(i)];
-            double *fi1 = &forwardMatrix[off(i-1)];
-            double sum;
+            float_type *fi = &forwardMatrix[off(i)];
+            float_type *fi1 = &forwardMatrix[off(i-1)];
+            float_type sum;
 
             int beg = 1;
             int end = referenceLength;
@@ -870,7 +888,7 @@ struct hmm_glocal : public lambda<system>
             for (k = beg; k <= end; ++k)
             {
                 int u, v11, v01, v10;
-                double e = calcEpsilon(referenceBases[k-1], qyi, inputQualities[queryStart+i-1]);
+                float_type e = calcEpsilon(referenceBases[k-1], qyi, inputQualities[queryStart+i-1]);
 //                printf("read %d: referenceBases[%d-1] = %c inputQualities[%d+%d-1] = %d qyi = %c -> e = %.4f\n",
 //                       read_index,
 //                       k,
@@ -916,7 +934,7 @@ struct hmm_glocal : public lambda<system>
         }
 
         { // f[l_query+1]
-            double sum = 0.0;
+            float_type sum = 0.0;
 
             for (k = 1; k <= referenceLength; ++k)
             {
@@ -936,7 +954,7 @@ struct hmm_glocal : public lambda<system>
         for (k = 1; k <= referenceLength; ++k)
         {
             int u = set_u(bandWidth, queryLen, k);
-            double *bi = &backwardMatrix[off(queryLen)];
+            float_type *bi = &backwardMatrix[off(queryLen)];
 
             if (u < 3 || u >= bandWidth2*3+3)
                 continue;
@@ -952,9 +970,9 @@ struct hmm_glocal : public lambda<system>
             int end = referenceLength;
             int x, _beg, _end;
 
-            double *bi = &backwardMatrix[off(i)];
-            double *bi1 = &backwardMatrix[off(i+1)];
-            double y = (i > 1)? 1. : 0.;
+            float_type *bi = &backwardMatrix[off(i)];
+            float_type *bi1 = &backwardMatrix[off(i+1)];
+            float_type y = (i > 1)? 1. : 0.;
 
             char qyi1 = queryBases[queryStart+i];
 
@@ -973,7 +991,7 @@ struct hmm_glocal : public lambda<system>
                 v10 = set_u(bandWidth, i+1, k);
                 v01 = set_u(bandWidth, i, k+1);
 
-                /* const */ double e;
+                /* const */ float_type e;
                 if (k >= referenceLength)
                     e = 0;
                 else
@@ -994,16 +1012,16 @@ struct hmm_glocal : public lambda<system>
                 bi[k] *= y;
         }
 
-//        double pb = 0.0;
+//        float_type pb = 0.0;
         { // b[0]
             int beg = 1;
             int end = referenceLength < bandWidth + 1? referenceLength : bandWidth + 1;
 
-            double sum = 0.0;
+            float_type sum = 0.0;
             for (k = end; k >= beg; --k)
             {
                 int u = set_u(bandWidth, 1, k);
-                double e = calcEpsilon(referenceBases[k-1], queryBases[queryStart], inputQualities[queryStart]);
+                float_type e = calcEpsilon(referenceBases[k-1], queryBases[queryStart], inputQualities[queryStart]);
 
                 if (u < 3 || u >= bandWidth2*3+3)
                     continue;
@@ -1018,11 +1036,11 @@ struct hmm_glocal : public lambda<system>
         /*** MAP ***/
         for (i = 1; i <= queryLen; ++i)
         {
-            double sum = 0.0;
-            double max = 0.0;
+            float_type sum = 0.0;
+            float_type max = 0.0;
 
-            const double *fi = &forwardMatrix[off(i)];
-            const double *bi = &backwardMatrix[off(i)];
+            const float_type *fi = &forwardMatrix[off(i)];
+            const float_type *bi = &backwardMatrix[off(i)];
 
             int beg = 1;
             int end = referenceLength;
@@ -1037,7 +1055,7 @@ struct hmm_glocal : public lambda<system>
             for (k = beg; k <= end; ++k)
             {
                 const int u = set_u(bandWidth, i, k);
-                double z = 0.0;
+                float_type z = 0.0;
 
                 z = fi[u+0] * bi[u+0];
                 sum += z;
@@ -1064,7 +1082,7 @@ struct hmm_glocal : public lambda<system>
 
             if (outputQualities != NULL)
             {
-                k = (int)(double(-4.343) * log(double(1.0) - double(max)) + double(.499)); // = 10*log10(1-max)
+                k = (int)(float_type(-4.343) * log(float_type(1.0) - float_type(max)) + float_type(.499)); // = 10*log10(1-max)
                 outputQualities[queryStart+i-1] = (char)(k > 100? 99 : (k < MIN_BASE_QUAL ? MIN_BASE_QUAL : k));
 
 //                printf("outputQualities[%d]: max = %.16f k = %d -> %d\n", queryStart+i-1, max, k, outputQualities[queryStart+i-1]);
@@ -1077,15 +1095,23 @@ struct hmm_glocal : public lambda<system>
 
 // functor to compute the size required for the forward/backward HMM matrix
 // note that this computes the size required for *one* matrix only; we allocate the matrices on two separate vectors and use the same index for both
-template <target_system system>
+template <typename float_type, target_system system>
 struct compute_hmm_matrix_size : public thrust::unary_function<uint32, uint32>, public lambda<system>
 {
-    LAMBDA_INHERIT;
+    LAMBDA_INHERIT_MEMBERS;
+
+    typename baq_context_internal<float_type, system>::view baq;
+
+    compute_hmm_matrix_size(typename firepony_context<system>::view ctx,
+                            typename baq_context_internal<float_type, system>::view baq,
+                            const typename alignment_batch_device<system>::const_view batch)
+        : lambda<system>(ctx, batch), baq(baq)
+    { }
 
     CUDA_HOST_DEVICE uint32 operator() (const uint32 read_index)
     {
         const CRQ_index idx = batch.crq_index(read_index);
-        return hmm_glocal<system>::matrix_size(idx.read_len, ctx.baq.bandwidth[read_index]);
+        return hmm_glocal<float_type, system>::matrix_size(idx.read_len, baq.bandwidth[read_index]);
     }
 };
 
@@ -1115,10 +1141,18 @@ struct read_needs_baq : public lambda<system>
     }
 };
 
-template <target_system system>
+template <typename float_type, target_system system>
 struct read_flat_baq : public lambda<system>
 {
-    LAMBDA_INHERIT;
+    LAMBDA_INHERIT_MEMBERS;
+
+    typename baq_context_internal<float_type, system>::view baq;
+
+    read_flat_baq(typename firepony_context<system>::view ctx,
+                  typename baq_context_internal<float_type, system>::view baq,
+                  const typename alignment_batch_device<system>::const_view batch)
+        : lambda<system>(ctx, batch), baq(baq)
+    { }
 
     CUDA_HOST_DEVICE void operator() (const uint32 read_index)
     {
@@ -1144,17 +1178,19 @@ struct read_flat_baq : public lambda<system>
 };
 
 // bottom half of BAQ.calcBAQFromHMM in GATK
-template <target_system system>
+template <typename float_type, target_system system>
 struct cap_baq_qualities : public lambda<system>
 {
-    LAMBDA_INHERIT;
+    LAMBDA_INHERIT_MEMBERS;
 
+    typename baq_context_internal<float_type, system>::view baq;
     typename vector<system, uint32>::view baq_state;
 
     cap_baq_qualities(typename firepony_context<system>::view ctx,
+                      typename baq_context_internal<float_type, system>::view baq,
                       const typename alignment_batch_device<system>::const_view batch,
                       typename vector<system, uint32>::view baq_state)
-        : lambda<system>(ctx, batch), baq_state(baq_state)
+        : lambda<system>(ctx, batch), baq(baq), baq_state(baq_state)
     { }
 
     CUDA_HOST_DEVICE bool stateIsIndel(uint32 state)
@@ -1286,7 +1322,7 @@ struct cap_baq_qualities : public lambda<system>
 
         const auto read_window_clipped = ctx.cigar.read_window_clipped[read_index];
         const auto reference_window_clipped = ctx.cigar.reference_window_clipped[read_index];
-        const auto hmm_reference_window = ctx.baq.hmm_reference_windows[read_index];
+        const auto hmm_reference_window = baq.hmm_reference_windows[read_index];
 
         // scan for the start of the baq region
         uint32 baq_start = 0;
@@ -1332,10 +1368,18 @@ struct cap_baq_qualities : public lambda<system>
 };
 
 // transforms BAQ scores the same way as GATK's encodeBQTag
-template <target_system system>
+template <typename float_type, target_system system>
 struct recode_baq_qualities : public lambda<system>
 {
-    LAMBDA_INHERIT;
+    LAMBDA_INHERIT_MEMBERS;
+
+    typename baq_context_internal<float_type, system>::view baq;
+
+    recode_baq_qualities(typename firepony_context<system>::view ctx,
+                         typename baq_context_internal<float_type, system>::view baq,
+                         const typename alignment_batch_device<system>::const_view batch)
+        : lambda<system>(ctx, batch), baq(baq)
+    { }
 
     CUDA_HOST_DEVICE void operator() (const uint32 read_index)
     {
@@ -1356,10 +1400,9 @@ struct recode_baq_qualities : public lambda<system>
     }
 };
 
-template <target_system system>
-void baq_reads(firepony_context<system>& context, const alignment_batch<system>& batch)
+template <typename float_type, target_system system>
+static void baq_reads_internal(baq_context_internal<float_type, system>& baq, firepony_context<system>& context, const alignment_batch<system>& batch)
 {
-    struct baq_context<system>& baq = context.baq;
     vector<system, uint32>& active_baq_read_list = context.temp_u32;
     vector<system, uint32>& baq_state = context.temp_u32_2;
     vector<system, uint32>& temp_active_list = context.temp_u32_3;
@@ -1400,14 +1443,14 @@ void baq_reads(firepony_context<system>& context, const alignment_batch<system>&
     // note: this is used both for real BAQ and flat BAQ, so we use the full active read list
     parallel<system>::for_each(context.active_read_list.begin(),
                                context.active_read_list.end(),
-                               compute_hmm_windows<system>(context, batch.device));
+                               compute_hmm_windows<float_type, system>(context, baq, batch.device));
 
     // remove any reads for which we failed to compute the HMM window
     temp_active_list.resize(active_baq_read_list.size());
     num_active = parallel<system>::copy_if(active_baq_read_list.begin(),
                                            active_baq_read_list.size(),
                                            temp_active_list.begin(),
-                                           hmm_window_valid<system>(context, batch.device),
+                                           hmm_window_valid<float_type, system>(context, baq, batch.device),
                                            context.temp_storage);
     active_baq_read_list = temp_active_list;
     active_baq_read_list.resize(num_active);
@@ -1416,7 +1459,7 @@ void baq_reads(firepony_context<system>& context, const alignment_batch<system>&
     uint32 temp_num_active = parallel<system>::copy_if(context.active_read_list.begin(),
                                                        context.active_read_list.size(),
                                                        temp_active_list.begin(),
-                                                       hmm_window_valid<system>(context, batch.device),
+                                                       hmm_window_valid<float_type, system>(context, baq, batch.device),
                                                        context.temp_storage);
     context.active_read_list = temp_active_list;
     context.active_read_list.resize(temp_num_active);
@@ -1431,7 +1474,7 @@ void baq_reads(firepony_context<system>& context, const alignment_batch<system>&
         thrust::fill_n(baq.matrix_index.begin(), 1, 0);
         // do an inclusive scan to compute all offsets + the total size
         parallel<system>::inclusive_scan(thrust::make_transform_iterator(active_baq_read_list.begin(),
-                                                                         compute_hmm_matrix_size<system>(context, batch.device)),
+                                                                         compute_hmm_matrix_size<float_type, system>(context, baq, batch.device)),
                                          num_active,
                                          baq.matrix_index.begin() + 1,
                                          thrust::plus<uint32>());
@@ -1456,11 +1499,11 @@ void baq_reads(firepony_context<system>& context, const alignment_batch<system>&
     baq.scaling.resize(scaling_len);
 
 //    fprintf(stderr, "reads: %u\n", batch.num_reads);
-//    fprintf(stderr, "forward len = %u bytes = %lu\n", matrix_len, matrix_len * sizeof(double));
+//    fprintf(stderr, "forward len = %u bytes = %lu\n", matrix_len, matrix_len * sizeof(float_type));
 //    fprintf(stderr, "expected len = %lu expected bytes = %lu\n",
 //            hmm_common::matrix_size(100) * context.active_read_list.size(),
-//            hmm_common::matrix_size(100) * context.active_read_list.size() * sizeof(double));
-//    fprintf(stderr, "per read matrix size = %u bytes = %lu\n", hmm_common::matrix_size(100), hmm_common::matrix_size(100) * sizeof(double));
+//            hmm_common::matrix_size(100) * context.active_read_list.size() * sizeof(float_type));
+//    fprintf(stderr, "per read matrix size = %u bytes = %lu\n", hmm_common::matrix_size(100), hmm_common::matrix_size(100) * sizeof(float_type));
 //    fprintf(stderr, "matrix index = [ ");
 //    for(uint32 i = 0; i < 20; i++)
 //    {
@@ -1476,10 +1519,10 @@ void baq_reads(firepony_context<system>& context, const alignment_batch<system>&
 
 
     baq_state.resize(batch.device.qualities.size());
-    baq.qualities.resize(batch.device.qualities.size());
+    context.baq.qualities.resize(batch.device.qualities.size());
 
     thrust::fill(baq_state.begin(), baq_state.end(), uint32(-1));
-    thrust::fill(baq.qualities.begin(), baq.qualities.end(), uint8(-1));
+    thrust::fill(context.baq.qualities.begin(), context.baq.qualities.end(), uint8(-1));
 
     // initialize matrices and scaling factors
 #if ENABLE_LMEM_PATH
@@ -1507,7 +1550,7 @@ void baq_reads(firepony_context<system>& context, const alignment_batch<system>&
                          thrust::make_zip_iterator(thrust::make_tuple(active_baq_read_list.end(),
                                                                       baq.matrix_index.end(),
                                                                       baq.scaling_index.end())),
-                         hmm_glocal<system>(context, batch.device, baq_state));
+                         hmm_glocal<float_type, system>(context, baq, batch.device, baq_state));
     }
 #if ENABLE_LMEM_PATH
     else {
@@ -1527,22 +1570,22 @@ void baq_reads(firepony_context<system>& context, const alignment_batch<system>&
     baq_postprocess.start();
 
 #if PRESERVE_BAQ_STATE
-    context.baq.state = baq_state;
+    baq.state = baq_state;
 #endif
 
     // for any reads that we did *not* compute a BAQ, mark the base pairs as having no BAQ uncertainty
     parallel<system>::for_each(context.active_read_list.begin(),
                                context.active_read_list.end(),
-                               read_flat_baq<system>(context, batch.device));
+                               read_flat_baq<float_type, system>(context, baq, batch.device));
 
     // transform quality scores
     parallel<system>::for_each(active_baq_read_list.begin(),
                                active_baq_read_list.end(),
-                               cap_baq_qualities<system>(context, batch.device, baq_state));
+                               cap_baq_qualities<float_type, system>(context, baq, batch.device, baq_state));
 
     parallel<system>::for_each(active_baq_read_list.begin(),
                                active_baq_read_list.end(),
-                               recode_baq_qualities<system>(context, batch.device));
+                               recode_baq_qualities<float_type, system>(context, baq, batch.device));
 
     baq_postprocess.stop();
 
@@ -1553,10 +1596,25 @@ void baq_reads(firepony_context<system>& context, const alignment_batch<system>&
     context.stats.baq_hmm.add(baq_hmm);
     context.stats.baq_postprocess.add(baq_postprocess);
 }
-INSTANTIATE(baq_reads);
 
 template <target_system system>
-void debug_baq(firepony_context<system>& context, const alignment_batch<system>& batch, int read_index)
+void baq_reads(firepony_context<system>& context, const alignment_batch<system>& batch)
+{
+    switch(context.options.baq_float_precision)
+    {
+    case BAQ_SINGLE_PRECISION:
+        baq_reads_internal(context.baq.f32, context, batch);
+        break;
+
+    case BAQ_DOUBLE_PRECISION:
+        baq_reads_internal(context.baq.f64, context, batch);
+        break;
+    }
+}
+INSTANTIATE(baq_reads);
+
+template <typename float_type, target_system system>
+static void debug_baq_internal(baq_context_internal<float_type, system>& baq, firepony_context<system>& context, const alignment_batch<system>& batch, int read_index)
 {
     const alignment_batch_host& h_batch = *batch.host;
 
@@ -1565,7 +1623,7 @@ void debug_baq(firepony_context<system>& context, const alignment_batch<system>&
     const CRQ_index idx = h_batch.crq_index(read_index);
 
     ushort2 read_window = context.cigar.read_window_clipped[read_index];
-    short2 reference_window = context.baq.hmm_reference_windows[read_index];
+    short2 reference_window = baq.hmm_reference_windows[read_index];
 
     fprintf(stderr, "    read window                 = [ %u %u ]\n", read_window.x, read_window.y);
     fprintf(stderr, "    relative reference window   = [ %d %d ]\n", reference_window.x, reference_window.y);
@@ -1587,7 +1645,7 @@ void debug_baq(firepony_context<system>& context, const alignment_batch<system>&
     fprintf(stderr, "    BAQ state                   = [ ");
     for(uint32 i = idx.qual_start; i < idx.qual_start + idx.qual_len; i++)
     {
-        uint32 q = context.baq.state[i];
+        uint32 q = baq.state[i];
         if (q == uint8(-1))
         {
             fprintf(stderr, "   - ");
@@ -1599,6 +1657,21 @@ void debug_baq(firepony_context<system>& context, const alignment_batch<system>&
 #endif
 
     fprintf(stderr, "\n");
+}
+
+template <target_system system>
+void debug_baq(firepony_context<system>& context, const alignment_batch<system>& batch, int read_index)
+{
+    switch(context.options.baq_float_precision)
+    {
+    case BAQ_SINGLE_PRECISION:
+        debug_baq_internal(context.baq.f32, context, batch, read_index);
+        break;
+
+    case BAQ_DOUBLE_PRECISION:
+        debug_baq_internal(context.baq.f64, context, batch, read_index);
+        break;
+    }
 }
 INSTANTIATE(debug_baq);
 

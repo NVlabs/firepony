@@ -29,6 +29,7 @@
 
 #include "device_types.h"
 #include "alignment_data_device.h"
+#include "../runtime_options.h"
 
 namespace firepony {
 
@@ -37,8 +38,8 @@ namespace firepony {
 // set to 1 to store BAQ state in the context, useful for debugging
 #define PRESERVE_BAQ_STATE 0
 
-template <target_system system>
-struct baq_context
+template <typename float_type, target_system system>
+struct baq_context_internal
 {
     // reference windows for HMM relative to the base alignment position
     // note: these are signed and the first coordinate is expected to be negative
@@ -46,8 +47,6 @@ struct baq_context
     // band widths
     vector<system, uint16> bandwidth;
 
-    // BAQ'ed qualities for each read, same size as each read
-    vector<system, uint8> qualities;
 #if PRESERVE_BAQ_STATE
     // BAQ state, for debugging
     vector<system, uint32> state;
@@ -55,13 +54,13 @@ struct baq_context
 
     // forward and backward HMM matrices
     // each read requires read_len * 6 * (bandWidth + 1)
-    vector<system, double> forward;
-    vector<system, double> backward;
+    vector<system, float_type> forward;
+    vector<system, float_type> backward;
     // index vector for forward/backward matrices
     vector<system, uint32> matrix_index;
 
     // scaling factors
-    vector<system, double> scaling;
+    vector<system, float_type> scaling;
     // index vector for scaling factors
     vector<system, uint32> scaling_index;
 
@@ -69,11 +68,10 @@ struct baq_context
     {
         typename vector<system, short2>::view hmm_reference_windows;
         typename vector<system, uint16>::view bandwidth;
-        typename vector<system, uint8>::view qualities;
-        typename vector<system, double>::view forward;
-        typename vector<system, double>::view backward;
+        typename vector<system, float_type>::view forward;
+        typename vector<system, float_type>::view backward;
         typename vector<system, uint32>::view matrix_index;
-        typename vector<system, double>::view scaling;
+        typename vector<system, float_type>::view scaling;
         typename vector<system, uint32>::view scaling_index;
     };
 
@@ -82,12 +80,39 @@ struct baq_context
         view v = {
                 hmm_reference_windows,
                 bandwidth,
-                qualities,
                 forward,
                 backward,
                 matrix_index,
                 scaling,
                 scaling_index,
+        };
+
+        return v;
+    }
+};
+
+template <target_system system>
+struct baq_context
+{
+    // BAQ'ed qualities for each read, same size as each read
+    vector<system, uint8> qualities;
+
+    baq_context_internal<float, system> f32;
+    baq_context_internal<double, system> f64;
+
+    struct view
+    {
+        typename vector<system, uint8>::view qualities;
+        typename baq_context_internal<float, system>::view f32;
+        typename baq_context_internal<double, system>::view f64;
+    };
+
+    operator view()
+    {
+        view v = {
+                qualities,
+                f32,
+                f64,
         };
 
         return v;
