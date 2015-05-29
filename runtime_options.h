@@ -63,6 +63,7 @@ struct runtime_options
 
     // serialize intermediate data
     const char *serialization_path;
+    const char *serialization_input_path;
 
     void disable_all_backends(void)
     {
@@ -91,6 +92,7 @@ struct runtime_options
         try_mmap = false;
 
         serialization_path = nullptr;
+        serialization_input_path = nullptr;
     }
 };
 

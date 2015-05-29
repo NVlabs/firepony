@@ -58,6 +58,7 @@ struct firepony_pipeline
 
     virtual void gather_intermediates(firepony_pipeline *other) = 0;
     virtual void serialize(void) = 0;
+    virtual void unserialize(void) = 0;
     virtual void postprocess(void) = 0;
 
     // the meaning of device depends on the target system:

@@ -208,6 +208,8 @@ static void serialize_table(covariate_observation_table<system>& table, std::str
     size_t size = serialization::serialized_size(h_table.keys) +
                   serialization::serialized_size(h_table.values);
 
+    fprintf(stderr, "writing %s\n", output.c_str());
+
     void *mem = malloc(size);
     void *ptr = mem;
 
@@ -222,13 +224,54 @@ static void serialize_table(covariate_observation_table<system>& table, std::str
 }
 
 template <target_system system>
+static void unserialize_table(covariate_observation_table<system>& table, std::string input)
+{
+    fprintf(stderr, "loading %s\n", input.c_str());
+    FILE *fp = fopen(input.c_str(), "rb");
+    fseek(fp, 0, SEEK_END);
+    size_t size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+
+    void *mem = malloc(size);
+
+    fread(mem, size, 1, fp);
+    fclose(fp);
+
+    void *ptr = mem;
+
+    ptr = serialization::unserialize(&table.keys, ptr);
+    ptr = serialization::unserialize(&table.values, ptr);
+
+    free(mem);
+}
+
+template <target_system system>
 void firepony_serialize(firepony_context<system>& context)
 {
+    postprocess_covariates(context);
+
+    fprintf(stderr, "serializing context %p target_system %s\n", &context, (system == cuda ? "cuda" : "tbb"));
+
     serialize_table(context.covariates.quality, std::string(context.options.serialization_path) + "/quality.table");
     serialize_table(context.covariates.cycle, std::string(context.options.serialization_path) + "/cycle.table");
     serialize_table(context.covariates.context, std::string(context.options.serialization_path) + "/context.table");
 }
 INSTANTIATE(firepony_serialize);
+
+template <target_system system>
+void firepony_unserialize(firepony_context<system>& context)
+{
+    covariate_observation_table<host> h_quality, h_cycle, h_context;
+
+    unserialize_table(h_quality, std::string(context.options.serialization_input_path) + "/quality.table");
+    unserialize_table(h_cycle, std::string(context.options.serialization_input_path) + "/cycle.table");
+    unserialize_table(h_context, std::string(context.options.serialization_input_path) + "/context.table");
+
+    context.covariates.quality.copyfrom(h_quality);
+    context.covariates.cycle.copyfrom(h_cycle);
+    context.covariates.context.copyfrom(h_context);
+}
+INSTANTIATE(firepony_unserialize);
 
 template <target_system system>
 void firepony_postprocess(firepony_context<system>& context)

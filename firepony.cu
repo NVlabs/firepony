@@ -240,35 +240,41 @@ int main(int argc, char **argv)
                  &h_dbsnp);
     }
 
-    fprintf(stderr, "processing file %s...\n", command_line_options.input);
-
+    // we pick the first device to do the postprocessing on
+    auto d = compute_devices[0];
     timer<host> wall_clock;
 
     wall_clock.start();
 
-    for(auto d : compute_devices)
+    if (!command_line_options.serialization_input_path)
     {
-        d->start();
-    }
+        fprintf(stderr, "processing file %s...\n", command_line_options.input);
 
-    for(auto d : compute_devices)
-    {
-        d->join();
-    }
-
-    fprintf(stderr, "\n");
-
-    // we pick the first device to do the postprocessing on
-    auto d = compute_devices[0];
-    if (compute_devices.size() > 1)
-    {
-        for(uint32 i = 1; i < compute_devices.size(); i++)
+        for(auto d : compute_devices)
         {
-            d->gather_intermediates(compute_devices[i]);
+            d->start();
         }
+
+        for(auto d : compute_devices)
+        {
+            d->join();
+        }
+
+        fprintf(stderr, "\n");
+
+        if (compute_devices.size() > 1)
+        {
+            for(uint32 i = 1; i < compute_devices.size(); i++)
+            {
+                d->gather_intermediates(compute_devices[i]);
+            }
+        }
+
+        d->serialize();
+    } else {
+        d->unserialize();
     }
 
-    d->serialize();
     d->postprocess();
 
     wall_clock.stop();
@@ -315,7 +321,10 @@ int main(int argc, char **argv)
     }
     fprintf(stderr, "\n");
 
-    reader.join();
+    if (!command_line_options.serialization_input_path)
+    {
+        reader.join();
+    }
 
     return 0;
 }
