@@ -52,6 +52,129 @@ struct cigar_op_len : public thrust::unary_function<const cigar_op&, uint32>
     }
 };
 
+template <target_system system>
+struct compute_error_vectors : public lambda<system>
+{
+    LAMBDA_INHERIT_MEMBERS;
+
+    pointer<system, uint8> snp_vector;
+    pointer<system, uint8> ins_vector;
+    pointer<system, uint8> del_vector;
+
+    compute_error_vectors(firepony_context<system> ctx,
+                          const alignment_batch_device<system> batch,
+                          pointer<system, uint8> snp_vector,
+                          pointer<system, uint8> ins_vector,
+                          pointer<system, uint8> del_vector)
+        : lambda<system>(ctx, batch),
+          snp_vector(snp_vector),
+          ins_vector(ins_vector),
+          del_vector(del_vector)
+    { }
+
+    CUDA_HOST_DEVICE void operator() (const uint32 read_index)
+    {
+        const CRQ_index idx = batch.crq_index(read_index);
+        const bool negative_strand = batch.flags[read_index] & AlignmentFlags::REVERSE;
+
+        auto reference = ctx.reference_db.get_sequence_data(batch.chromosome[read_index],
+                                                            batch.alignment_start[read_index]);
+
+        const auto read_window_clipped = ctx.cigar.read_window_clipped[read_index];
+        const auto reference_window_clipped = ctx.cigar.reference_window_clipped[read_index];
+
+        uint16 current_bp_idx = 0;
+        uint16 num_errors = 0;
+
+        // go through the cigar events looking for the event we're interested in
+        for(uint32 event = idx.cigar_start; event < idx.cigar_start + idx.cigar_len; event++)
+        {
+            // figure out the cigar event range for this event
+            const uint32 cigar_start = ctx.cigar.cigar_offsets[event];
+            const uint32 cigar_end = ctx.cigar.cigar_offsets[event+1];
+
+            switch(batch.cigars[event].op)
+            {
+            case cigar_op::OP_M:
+
+                for(uint32 i = cigar_start; i < cigar_end; i++)
+                {
+                    // update the current read bp index
+                    current_bp_idx = ctx.cigar.cigar_event_read_coordinates[i];
+                    // load the read bp
+                    const uint8 read_bp = batch.reads[idx.read_start + current_bp_idx];
+
+                    // load the corresponding sequence bp
+                    const uint32 reference_bp_idx = ctx.cigar.cigar_event_reference_coordinates[i];
+                    const uint8 reference_bp = reference[reference_bp_idx];
+
+                    if (reference_bp != read_bp)
+                    {
+                        snp_vector[idx.read_start + current_bp_idx] = 1;
+
+                        // if we are inside the clipped read window, count this error
+                        if (current_bp_idx >= read_window_clipped.x && current_bp_idx <= read_window_clipped.y)
+                            num_errors++;
+                    }
+                }
+
+                break;
+
+            case cigar_event::I:
+                // mark the read bp where an insertion begins
+                current_bp_idx = ctx.cigar.cigar_event_read_coordinates[cigar_start];
+
+                if (current_bp_idx >= read_window_clipped.x && current_bp_idx <= read_window_clipped.y)
+                {
+                    int off;
+
+                    if (!negative_strand)
+                    {
+                        off = current_bp_idx - 1;
+                    } else {
+                        off = current_bp_idx + batch.cigars[event].len;
+                    }
+
+                    if (off >= 0 && off <= read_window_clipped.y)
+                    {
+                        ins_vector[idx.read_start + off] = 1;
+                        num_errors++;
+                    }
+                }
+
+                break;
+
+            case cigar_event::D:
+                // note: deletions do not exist in the read, so current_bp_idx is not updated here
+                // also, because of this, we need to test against reference coordinates instead
+                uint16 current_ref_idx = ctx.cigar.cigar_event_reference_coordinates[cigar_start];
+
+                if (current_ref_idx >= reference_window_clipped.x && current_ref_idx <= reference_window_clipped.y)
+                {
+                    // mark the read bp where a deletion begins
+                    if (!negative_strand)
+                    {
+                        del_vector[idx.read_start + current_bp_idx] = 1;
+                        num_errors++;
+                    } else {
+                        uint16 off = current_bp_idx + 1;
+                        if (off < idx.read_len)
+                        {
+                            del_vector[idx.read_start + off] = 1;
+                            num_errors++;
+                        }
+                    }
+
+                }
+
+                break;
+            }
+        }
+
+        ctx.cigar.num_errors[read_index] = num_errors;
+    }
+};
+
 // expand cigar ops into temp storage
 template <target_system system>
 struct cigar_op_expand : public lambda<system>
@@ -94,6 +217,12 @@ struct cigar_op_expand : public lambda<system>
     }
 };
 
+template <target_system system>
+struct work_on_cigar : public lambda<system>
+{
+    LAMBDA_INHERIT;
+
+#if 0
 // initialize read windows
 // note: this does not initialize the reference window, as it needs to be computed once all clipping has been done
 template <target_system system>
@@ -102,10 +231,13 @@ struct read_window_init : public lambda<system>
     LAMBDA_INHERIT;
 
     CUDA_HOST_DEVICE void operator() (const uint32 read_index)
+#endif
+    LIFT_HOST_DEVICE void read_window_init(const uint32 read_index)    
     {
         const CRQ_index idx = batch.crq_index(read_index);
         ctx.cigar.read_window_clipped[read_index] = make_ushort2(0, idx.read_len - 1);
     }
+#if 0
 };
 
 // clips sequencing adapters from the reads
@@ -113,6 +245,7 @@ template <target_system system>
 struct remove_adapters : public lambda<system>
 {
     LAMBDA_INHERIT;
+#endif
 
     CUDA_HOST_DEVICE bool hasWellDefinedFragmentSize(const uint32 read_index)
     {
@@ -319,7 +452,10 @@ struct remove_adapters : public lambda<system>
         return reference_window_clipped;
     }
 
+#if 0
     CUDA_HOST_DEVICE void operator() (const uint32 read_index)
+#endif
+    LIFT_HOST_DEVICE void remove_adapters(const uint32 read_index)
     {
         uint32 adaptorBoundary = getAdaptorBoundary(read_index);
 
@@ -341,6 +477,7 @@ struct remove_adapters : public lambda<system>
             hardClipByReferenceCoordinates_RightTail(read_index, adaptorBoundary);
         }
     }
+#if 0
 };
 
 // remove soft-clip regions from the active read window
@@ -350,6 +487,8 @@ struct remove_soft_clips : public lambda<system>
     LAMBDA_INHERIT;
 
     CUDA_HOST_DEVICE void operator() (const uint32 read_index)
+#endif
+    LIFT_HOST_DEVICE void remove_soft_clips(const uint32 read_index)
     {
         const CRQ_index idx = batch.crq_index(read_index);
 
@@ -405,6 +544,7 @@ struct remove_soft_clips : public lambda<system>
 
         ctx.cigar.read_window_clipped[read_index] = read_window_clipped;
     }
+#if 0
 };
 
 // compute clipped read window without leading/trailing insertions
@@ -414,6 +554,8 @@ struct compute_no_insertions_window : public lambda<system>
     LAMBDA_INHERIT;
 
     CUDA_HOST_DEVICE void operator() (const uint32 read_index)
+#endif
+    LIFT_HOST_DEVICE void compute_no_insertions_window(const uint32 read_index)
     {
         const CRQ_index idx = batch.crq_index(read_index);
         const auto& read_window_clipped = ctx.cigar.read_window_clipped[read_index];
@@ -468,6 +610,7 @@ struct compute_no_insertions_window : public lambda<system>
             break;
         }
     }
+#if 0
 };
 
 template <target_system system>
@@ -476,6 +619,8 @@ struct compute_reference_window : public lambda<system>
     LAMBDA_INHERIT;
 
     CUDA_HOST_DEVICE void operator() (const uint32 read_index)
+#endif
+    LIFT_HOST_DEVICE void compute_reference_window(const uint32 read_index)
     {
         const CRQ_index idx = batch.crq_index(read_index);
 
@@ -531,16 +676,21 @@ struct compute_reference_window : public lambda<system>
             }
         }
     }
+#if 0
 };
+#endif
 
 // expand cigar coordinates for a read
 // xxxnsubtil: this is very similar to compute_alignment_window, should merge
+#if 0
 template <target_system system>
 struct cigar_coordinates_expand : public lambda<system>
 {
     LAMBDA_INHERIT;
 
     CUDA_HOST_DEVICE void operator() (const uint32 read_index)
+#endif
+    LIFT_HOST_DEVICE void cigar_coordinates_expand(const uint32 read_index)
     {
         const CRQ_index idx = batch.crq_index(read_index);
         const cigar_op *cigar = &batch.cigars[idx.cigar_start];
@@ -611,128 +761,18 @@ struct cigar_coordinates_expand : public lambda<system>
             }
         }
     }
+#if 0
 };
+#endif
 
-template <target_system system>
-struct compute_error_vectors : public lambda<system>
-{
-    LAMBDA_INHERIT_MEMBERS;
-
-    pointer<system, uint8> snp_vector;
-    pointer<system, uint8> ins_vector;
-    pointer<system, uint8> del_vector;
-
-    compute_error_vectors(firepony_context<system> ctx,
-                          const alignment_batch_device<system> batch,
-                          pointer<system, uint8> snp_vector,
-                          pointer<system, uint8> ins_vector,
-                          pointer<system, uint8> del_vector)
-        : lambda<system>(ctx, batch),
-          snp_vector(snp_vector),
-          ins_vector(ins_vector),
-          del_vector(del_vector)
-    { }
-
-    CUDA_HOST_DEVICE void operator() (const uint32 read_index)
+    LIFT_HOST_DEVICE void operator() (const uint32 read_index)
     {
-        const CRQ_index idx = batch.crq_index(read_index);
-        const bool negative_strand = batch.flags[read_index] & AlignmentFlags::REVERSE;
-
-        auto reference = ctx.reference_db.get_sequence_data(batch.chromosome[read_index],
-                                                            batch.alignment_start[read_index]);
-
-        const auto read_window_clipped = ctx.cigar.read_window_clipped[read_index];
-        const auto reference_window_clipped = ctx.cigar.reference_window_clipped[read_index];
-
-        uint16 current_bp_idx = 0;
-        uint16 num_errors = 0;
-
-        // go through the cigar events looking for the event we're interested in
-        for(uint32 event = idx.cigar_start; event < idx.cigar_start + idx.cigar_len; event++)
-        {
-            // figure out the cigar event range for this event
-            const uint32 cigar_start = ctx.cigar.cigar_offsets[event];
-            const uint32 cigar_end = ctx.cigar.cigar_offsets[event+1];
-
-            switch(batch.cigars[event].op)
-            {
-            case cigar_op::OP_M:
-
-                for(uint32 i = cigar_start; i < cigar_end; i++)
-                {
-                    // update the current read bp index
-                    current_bp_idx = ctx.cigar.cigar_event_read_coordinates[i];
-                    // load the read bp
-                    const uint8 read_bp = batch.reads[idx.read_start + current_bp_idx];
-
-                    // load the corresponding sequence bp
-                    const uint32 reference_bp_idx = ctx.cigar.cigar_event_reference_coordinates[i];
-                    const uint8 reference_bp = reference[reference_bp_idx];
-
-                    if (reference_bp != read_bp)
-                    {
-                        snp_vector[idx.read_start + current_bp_idx] = 1;
-
-                        // if we are inside the clipped read window, count this error
-                        if (current_bp_idx >= read_window_clipped.x && current_bp_idx <= read_window_clipped.y)
-                            num_errors++;
-                    }
-                }
-
-                break;
-
-            case cigar_event::I:
-                // mark the read bp where an insertion begins
-                current_bp_idx = ctx.cigar.cigar_event_read_coordinates[cigar_start];
-
-                if (current_bp_idx >= read_window_clipped.x && current_bp_idx <= read_window_clipped.y)
-                {
-                    int off;
-
-                    if (!negative_strand)
-                    {
-                        off = current_bp_idx - 1;
-                    } else {
-                        off = current_bp_idx + batch.cigars[event].len;
-                    }
-
-                    if (off >= 0 && off <= read_window_clipped.y)
-                    {
-                        ins_vector[idx.read_start + off] = 1;
-                        num_errors++;
-                    }
-                }
-
-                break;
-
-            case cigar_event::D:
-                // note: deletions do not exist in the read, so current_bp_idx is not updated here
-                // also, because of this, we need to test against reference coordinates instead
-                uint16 current_ref_idx = ctx.cigar.cigar_event_reference_coordinates[cigar_start];
-
-                if (current_ref_idx >= reference_window_clipped.x && current_ref_idx <= reference_window_clipped.y)
-                {
-                    // mark the read bp where a deletion begins
-                    if (!negative_strand)
-                    {
-                        del_vector[idx.read_start + current_bp_idx] = 1;
-                        num_errors++;
-                    } else {
-                        uint16 off = current_bp_idx + 1;
-                        if (off < idx.read_len)
-                        {
-                            del_vector[idx.read_start + off] = 1;
-                            num_errors++;
-                        }
-                    }
-
-                }
-
-                break;
-            }
-        }
-
-        ctx.cigar.num_errors[read_index] = num_errors;
+        cigar_coordinates_expand(read_index);
+        read_window_init(read_index);
+        remove_adapters(read_index);
+        remove_soft_clips(read_index);
+        compute_no_insertions_window(read_index);
+        compute_reference_window(read_index);
     }
 };
 
@@ -872,6 +912,7 @@ void expand_cigars(firepony_context<system>& context, const alignment_batch<syst
                                sanity_check_cigar_events<system>(firepony_context, batch.device));
 #endif
 
+#if 0
     // now expand the coordinates per read
     // this avoids having to deal with boundary conditions within reads
     parallel<system>::for_each(context.active_read_list.begin(),
@@ -902,6 +943,11 @@ void expand_cigars(firepony_context<system>& context, const alignment_batch<syst
     parallel<system>::for_each(context.active_read_list.begin(),
                                context.active_read_list.end(),
                                compute_reference_window<system>(context, batch.device));
+#else
+    parallel<system>::for_each(context.active_read_list.begin(),
+                               context.active_read_list.end(),
+                               work_on_cigar<system>(context, batch.device));
+#endif
 
     // compute the error bit vectors
     // this also counts the number of errors in each read
