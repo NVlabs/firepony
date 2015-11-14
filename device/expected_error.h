@@ -38,9 +38,9 @@ namespace firepony {
 template <target_system system, typename packer>
 struct calc_expected_error
 {
-    typename covariate_empirical_table<system>::view table;
+    covariate_empirical_table<system> table;
 
-    calc_expected_error(typename covariate_empirical_table<system>::view table)
+    calc_expected_error(covariate_empirical_table<system> table)
         : table(table)
     { }
 

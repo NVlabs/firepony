@@ -172,10 +172,10 @@ static CUDA_HOST_DEVICE double calcEmpiricalQuality(const covariate_empirical_va
 template <target_system system>
 struct calc_empirical_quality
 {
-    typename covariate_empirical_table<system>::view table;
+    covariate_empirical_table<system> table;
     bool need_rounding;
 
-    calc_empirical_quality(typename covariate_empirical_table<system>::view table, bool need_rounding)
+    calc_empirical_quality(covariate_empirical_table<system> table, bool need_rounding)
         : table(table), need_rounding(need_rounding)
     { }
 

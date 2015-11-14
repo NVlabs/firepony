@@ -45,6 +45,8 @@
 
 #include <thrust/functional.h>
 
+#include <lift/atomics.h>
+
 namespace firepony {
 
 // accumulates events from a read batch into a given covariate table
@@ -53,7 +55,7 @@ struct covariate_gatherer : public lambda<system>
 {
     LAMBDA_INHERIT;
 
-    CUDA_HOST_DEVICE void operator()(const uint32 cigar_event_index)
+    LIFT_DEVICE void operator()(const uint32 cigar_event_index)
     {
         const uint32 read_index = ctx.cigar.cigar_event_read_index[cigar_event_index];
 
@@ -102,6 +104,124 @@ struct covariate_gatherer : public lambda<system>
     }
 };
 
+template <typename covariate_packer>
+struct covariate_gatherer_cpu
+{
+    firepony_context<host>& ctx;
+    const alignment_batch_device<host>& batch;
+    covariate_observation_table<host>& table;
+    pointer<host, int32> bitmap;
+
+    covariate_gatherer_cpu(firepony_context<host>& ctx,
+                           const alignment_batch_device<host>& batch,
+                           covariate_observation_table<host>& table,
+                           pointer<host, int32> bitmap)
+        : ctx(ctx),
+          batch(batch),
+          table(table),
+          bitmap(bitmap)
+    { }
+
+    covariate_observation_value& map_value(uint32 thread_id, covariate_key key)
+    {
+        auto& map = *table.dev.key_value_maps[thread_id];
+
+        if (map.find(key) == map.end())
+        {
+            map[key] = { 0, 0 };
+        }
+
+        return map[key];
+    }
+
+    void operator()(const uint32 thread_id)
+    {
+        const uint32 num_threads = command_line_options.cpu_threads;
+        // const uint32 grain_size = ctx.cigar.cigar_event_read_coordinates.size() / double(command_line_options.cpu_threads);
+        const uint32 grain_size = 100;
+
+        // uint64 start = grain_size * thread_id;
+        // uint64 stop = std::min(grain_size * (thread_id + 1), uint64(ctx.cigar.cigar_event_read_coordinates.size()));
+        // uint64 start = 0;
+        // uint64 stop = ctx.cigar.cigar_event_read_coordinates.size();
+
+        // fprintf(stderr, "gather: tid %u range %u %u\n", thread_id, start, stop);
+
+        for(uint32 start = grain_size * thread_id; start < ctx.cigar.cigar_event_read_coordinates.size(); start += grain_size * num_threads)
+        {
+            uint32 stop = std::min(start + grain_size, ctx.cigar.cigar_event_read_coordinates.size());
+
+            for(uint32 cigar_event_index = start; cigar_event_index < stop; cigar_event_index++)
+            {
+                if (cigar_event_index > bitmap.size())
+                {
+                    fprintf(stderr, "porra!!\n");
+                    abort();
+                }
+
+                // atomics<host>::add(&bitmap[cigar_event_index], uint32(1));
+                bitmap[cigar_event_index]++;
+                
+                const uint32 read_index = ctx.cigar.cigar_event_read_index[cigar_event_index];
+
+                if (read_index == uint32(-1))
+                {
+                    // inactive read
+                    continue;
+                }
+
+                const CRQ_index idx = batch.crq_index(read_index);
+                const uint16 read_bp_offset = ctx.cigar.cigar_event_read_coordinates[cigar_event_index];
+                if (read_bp_offset == uint16(-1))
+                {
+                    continue;
+                }
+
+                if (read_bp_offset < ctx.cigar.read_window_clipped[read_index].x ||
+                    read_bp_offset > ctx.cigar.read_window_clipped[read_index].y)
+                {
+                    continue;
+                }
+
+                if (ctx.active_location_list[idx.read_start + read_bp_offset] == 0)
+                {
+                    continue;
+                }
+
+                if (ctx.cigar.cigar_events[cigar_event_index] == cigar_event::S)
+                {
+                    continue;
+                }
+
+                covariate_key_set keys = covariate_packer::chain::encode(ctx, batch, read_index, read_bp_offset, cigar_event_index, covariate_key_set{0, 0, 0});
+
+            // constexpr bool sparse = covariate_packer::chain::is_sparse(covariate_packer::TargetCovariate);
+
+            // if (sparse && covariate_packer::decode(keys.M, covariate_packer::TargetCovariate) != covariate_packer::chain::invalid_key(covariate_packer::TargetCovariate))
+                {
+                    auto& val_M = map_value(thread_id, keys.M);
+                    val_M.observations++;
+                    val_M.mismatches += ctx.fractional_error.snp_errors[idx.qual_start + read_bp_offset];
+                }
+
+            // if (sparse && covariate_packer::decode(keys.I, covariate_packer::TargetCovariate) != covariate_packer::chain::invalid_key(covariate_packer::TargetCovariate))
+                {
+                    auto& val_I = map_value(thread_id, keys.I);
+                    val_I.observations++;
+                    val_I.mismatches += ctx.fractional_error.insertion_errors[idx.qual_start + read_bp_offset];
+                }
+
+            // if (sparse && covariate_packer::decode(keys.D, covariate_packer::TargetCovariate) != covariate_packer::chain::invalid_key(covariate_packer::TargetCovariate))
+                {
+                    auto& val_D = map_value(thread_id, keys.D);
+                    val_D.observations++;
+                    val_D.mismatches += ctx.fractional_error.deletion_errors[idx.qual_start + read_bp_offset];
+                }
+            }
+        }
+    }
+};
+
 // functor that determines if a key is valid
 // note: operator() returns a uint32 to allow for composition of this functor with reduction operators
 template <target_system system, typename covariate_packer>
@@ -131,73 +251,115 @@ struct is_key_value_pair_valid : public thrust::unary_function<Tuple, bool>
     }
 };
 
+template <typename covariate_packer>
+static void gather_covariates(firepony_context<cuda>& context, const alignment_batch<cuda>& batch, covariate_observation_table<cuda>& table)
+{ }
+
+template <typename covariate_packer>
+static void gather_covariates(firepony_context<host>& context, const alignment_batch<host>& batch, covariate_observation_table<host>& table)
+{
+    scoped_allocation<host, int32> bitmap;
+    bitmap.resize(context.cigar.cigar_event_read_coordinates.size());
+    thrust::fill_n(bitmap.t_begin(), bitmap.size(), 0);
+
+    command_line_options.cpu_threads = 11;
+
+    table.dev.setup();
+    parallel<host>::for_each(command_line_options.cpu_threads, covariate_gatherer_cpu<covariate_packer>(context, batch.device, table, bitmap));
+
+    bool quit = false;
+    for(uint32 i = 0; i < bitmap.size(); i++)
+    {
+        if (bitmap[i] != 1)
+        {
+            fprintf(stderr, "bad bitmap at %u\n", i);
+            quit = true;
+        }
+    }
+
+    if (quit)
+        abort();
+}
+
 // processes a batch of reads and updates covariate table data for a given table
 template <typename covariate_packer, target_system system>
 static void build_covariates_table(covariate_observation_table<system>& table, firepony_context<system>& context, const alignment_batch<system>& batch)
 {
     auto& cv = context.covariates;
-    auto& scratch_table = cv.scratch_table_space;
-
-    scoped_allocation<system, covariate_observation_value> temp_values;
-    scoped_allocation<system, covariate_key> temp_keys;
 
     timer<system> covariates_gather, covariates_filter, covariates_sort, covariates_pack;
+    uint32 valid_keys;
 
-    covariates_gather.start();
-
-    // set up a scratch table space with enough room for 3 keys per cigar event
-    scratch_table.resize(context.cigar.cigar_events.size() * 3);
-
-    // mark all keys as invalid
-    thrust::fill(lift::backend_policy<system>::execution_policy(),
-                 scratch_table.keys.begin(),
-                 scratch_table.keys.end(),
-                 covariate_key(-1));
-
-    // generate keys into the scratch table
-    parallel<system>::for_each(thrust::make_counting_iterator(0u),
-                               thrust::make_counting_iterator(0u) + context.cigar.cigar_event_read_coordinates.size(),
-                               covariate_gatherer<system, covariate_packer>(context, batch.device));
-
-    covariates_gather.stop();
-
-    covariates_filter.start();
-
-    // count valid keys
-    uint32 valid_keys = parallel<system>::sum(thrust::make_transform_iterator(scratch_table.keys.begin(),
-                                                                              is_key_valid<system, covariate_packer>()),
-                                              scratch_table.keys.size(),
-                                              context.temp_storage);
-
-    if (valid_keys)
+    if (system == cuda)
     {
-        // concatenate valid keys to the end of the output table
-        size_t off = table.size();
-        table.resize(table.size() + valid_keys);
+        auto& scratch_table = cv.scratch_table_space;
 
-        parallel<system>::copy_if(thrust::make_zip_iterator(thrust::make_tuple(scratch_table.keys.begin(),
-                                                                               scratch_table.values.begin())),
-                                  scratch_table.keys.size(),
-                                  thrust::make_zip_iterator(thrust::make_tuple(table.keys.begin() + off,
-                                                                               table.values.begin() + off)),
-                                  is_key_value_pair_valid<system,
-                                                          covariate_packer,
-                                                          thrust::tuple<const covariate_key&, const typename covariate_observation_table<system>::value_type&> >(),
-                                  context.temp_storage);
-    }
+        scoped_allocation<system, covariate_observation_value> temp_values;
+        scoped_allocation<system, covariate_key> temp_keys;
 
-    covariates_filter.stop();
+        covariates_gather.start();
+        // set up a scratch table space with enough room for 3 keys per cigar event
+        scratch_table.resize(context.cigar.cigar_events.size() * 3);
+    
+        // mark all keys as invalid
+        thrust::fill(lift::backend_policy<system>::execution_policy(),
+                     scratch_table.keys.begin(),
+                     scratch_table.keys.end(),
+                     covariate_key(-1));
+    
+        // generate keys into the scratch table
+        parallel<system>::for_each(thrust::make_counting_iterator(0u),
+                                   thrust::make_counting_iterator(0u) + context.cigar.cigar_event_read_coordinates.size(),
+                                   covariate_gatherer<system, covariate_packer>(context, batch.device));
+    
+        covariates_gather.stop();
+    
+        covariates_filter.start();
+    
+        // count valid keys
+        valid_keys = parallel<system>::sum(thrust::make_transform_iterator(scratch_table.keys.begin(),
+                                                                           is_key_valid<system, covariate_packer>()),
+                                           scratch_table.keys.size(),
+                                           context.temp_storage);
+    
+        if (valid_keys)
+        {
+            // concatenate valid keys to the end of the output table
+            size_t off = table.size();
+            table.resize(table.size() + valid_keys);
+    
+            parallel<system>::copy_if(thrust::make_zip_iterator(thrust::make_tuple(scratch_table.keys.begin(),
+                                                                                   scratch_table.values.begin())),
+                                      scratch_table.keys.size(),
+                                      thrust::make_zip_iterator(thrust::make_tuple(table.keys.begin() + off,
+                                                                                   table.values.begin() + off)),
+                                      is_key_value_pair_valid<system,
+                                                              covariate_packer,
+                                                              thrust::tuple<const covariate_key&, const typename covariate_observation_table<system>::value_type&> >(),
+                                      context.temp_storage);
+        }
+    
+        covariates_filter.stop();
 
-    if (valid_keys)
-    {
-        // sort and reduce the table by key
-        covariates_sort.start();
-        table.sort(temp_keys, temp_values, context.temp_storage, covariate_packer::chain::bits_used);
-        covariates_sort.stop();
-
-        covariates_pack.start();
-        table.pack(temp_keys, temp_values, context.temp_storage);
-        covariates_pack.stop();
+        if (valid_keys)
+        {
+            // sort and reduce the table by key
+            covariates_sort.start();
+            table.sort(temp_keys, temp_values, context.temp_storage, covariate_packer::chain::bits_used);
+            covariates_sort.stop();
+    
+            covariates_pack.start();
+            table.pack(temp_keys, temp_values, context.temp_storage);
+            covariates_pack.stop();
+        }
+    } else {
+        covariates_gather.start();
+        // parallel<host>::for_each(command_line_options.cpu_threads, covariate_gatherer_cpu<covariate_packer>(context, batch.device));
+        gather_covariates<covariate_packer>(context, batch, table);
+        covariates_gather.stop();
+        covariates_filter.start();
+        covariates_filter.stop();
+        valid_keys = 0;
     }
 
     parallel<system>::synchronize();
@@ -250,15 +412,23 @@ void gather_covariates(firepony_context<system>& context, const alignment_batch<
 {
     auto& cv = context.covariates;
 
+    timer<system> hq_window;
+    hq_window.start();
+
     // compute the "high quality" windows (i.e., clip off low quality ends from each read)
     cv.high_quality_window.resize(batch.device.num_reads);
     parallel<system>::for_each(context.active_read_list.begin(),
                                context.active_read_list.end(),
                                compute_high_quality_windows<system>(context, batch.device));
 
+    hq_window.stop();
+
     build_covariates_table<covariate_packer_quality_score<system> >(cv.quality, context, batch);
     build_covariates_table<covariate_packer_cycle_illumina<system> >(cv.cycle, context, batch);
     build_covariates_table<covariate_packer_context<system> >(cv.context, context, batch);
+
+    parallel<system>::synchronize();
+    context.stats.covariates_hq_window.add(hq_window);   
 }
 INSTANTIATE(gather_covariates);
 
@@ -271,12 +441,18 @@ template <target_system system> void postprocess_covariates(firepony_context<sys
     scoped_allocation<system, covariate_observation_value> temp_values;
     scoped_allocation<system, covariate_key> temp_keys;
 
+    fprintf(stderr, "postprocess: quality\n");
+    cv.quality.expand_keys();
     cv.quality.sort(temp_keys, temp_values, context.temp_storage, covariate_packer_quality_score<system>::chain::bits_used);
     cv.quality.pack(temp_keys, temp_values, context.temp_storage);
 
+    fprintf(stderr, "postprocess: cycle\n");
+    cv.cycle.expand_keys();
     cv.cycle.sort(temp_keys, temp_values, context.temp_storage, covariate_packer_cycle_illumina<system>::chain::bits_used);
     cv.cycle.pack(temp_keys, temp_values, context.temp_storage);
 
+    fprintf(stderr, "postprocess: context\n");
+    cv.context.expand_keys();
     cv.context.sort(temp_keys, temp_values, context.temp_storage, covariate_packer_context<system>::chain::bits_used);
     cv.context.pack(temp_keys, temp_values, context.temp_storage);
 }

@@ -202,6 +202,7 @@ static void print_statistics(const timer<host>& wall_clock, const pipeline_stati
     fprintf(stderr, "     post: %.4f (%.2f%%)\n", stats.baq_postprocess.elapsed_time, stats.baq_postprocess.elapsed_time / stats.baq.elapsed_time * 100.0 / num_devices);
     fprintf(stderr, "   fractional error: %.4f (%.2f%%)\n", stats.fractional_error.elapsed_time, stats.fractional_error.elapsed_time / wall_clock.elapsed_time() * 100.0 / num_devices);
     fprintf(stderr, "   covariates: %.4f (%.2f%%)\n", stats.covariates.elapsed_time, stats.covariates.elapsed_time / wall_clock.elapsed_time() * 100.0 / num_devices);
+    fprintf(stderr, "     hq window: %.4f (%.2f%%)\n", stats.covariates_hq_window.elapsed_time, stats.covariates_hq_window.elapsed_time / wall_clock.elapsed_time() * 100.0 / num_devices);
     fprintf(stderr, "     gather: %.4f (%.2f%%)\n", stats.covariates_gather.elapsed_time, stats.covariates_gather.elapsed_time / wall_clock.elapsed_time() * 100.0 / num_devices);
     fprintf(stderr, "     filter: %.4f (%.2f%%)\n", stats.covariates_filter.elapsed_time, stats.covariates_filter.elapsed_time / wall_clock.elapsed_time() * 100.0 / num_devices);
     fprintf(stderr, "     sort: %.4f (%.2f%%)\n", stats.covariates_sort.elapsed_time, stats.covariates_sort.elapsed_time / wall_clock.elapsed_time() * 100.0 / num_devices);

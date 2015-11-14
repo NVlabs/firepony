@@ -6,7 +6,7 @@ if (CMAKE_COMPILER_IS_GNUCC)
     
     set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
     if (CMAKE_SYSTEM_PROCESSOR MATCHES "Intel" OR CMAKE_SYSTEM_PROCESSOR MATCHES "x86")
-        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -msse4.2 -mpopcnt -funroll-loops")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -msse4.2 -mpopcnt -funroll-loops -fomit-frame-pointer")
     endif()
 
     if(WERROR)

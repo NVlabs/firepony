@@ -72,6 +72,7 @@ struct pipeline_statistics // host-only
 #endif
     time_series baq_postprocess;
 
+    time_series covariates_hq_window;
     time_series covariates_gather;
     time_series covariates_filter;
     time_series covariates_sort;
@@ -105,11 +106,14 @@ struct pipeline_statistics // host-only
 
         baq_setup += other.baq_setup;
         baq_hmm += other.baq_hmm;
+#if BAQ_HMM_SPLIT_PHASE
         baq_hmm_forward += other.baq_hmm_forward;
         baq_hmm_backward += other.baq_hmm_backward;
         baq_hmm_map += other.baq_hmm_map;
+#endif
         baq_postprocess += other.baq_postprocess;
 
+        covariates_hq_window += other.covariates_hq_window;
         covariates_gather += other.covariates_gather;
         covariates_filter += other.covariates_filter;
         covariates_sort += other.covariates_sort;
