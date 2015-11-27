@@ -203,6 +203,9 @@ struct lambda
 #define LAMBDA_INHERIT_MEMBERS using lambda<system>::ctx; using lambda<system>::batch
 #define LAMBDA_INHERIT using lambda<system>::lambda; LAMBDA_INHERIT_MEMBERS
 
+#define LAMBDA_INHERIT_MEMBERS_SYS(__sys) using lambda<__sys>::ctx; using lambda<__sys>::batch
+#define LAMBDA_INHERIT_SYS(__sys) using lambda<__sys>::lambda; LAMBDA_INHERIT_MEMBERS_SYS(__sys)
+
 template <target_system system>
 struct lambda_context
 {
@@ -214,5 +217,8 @@ struct lambda_context
 };
 #define LAMBDA_CONTEXT_INHERIT_MEMBERS using lambda_context<system>::ctx
 #define LAMBDA_CONTEXT_INHERIT using lambda_context<system>::lambda_context; LAMBDA_CONTEXT_INHERIT_MEMBERS
+
+#define LAMBDA_CONTEXT_INHERIT_MEMBERS_SYS(__sys) using lambda_context<__sys>::ctx
+#define LAMBDA_CONTEXT_INHERIT_SYS(__sys) using lambda_context<__sys>::lambda_context; LAMBDA_CONTEXT_INHERIT_MEMBERS_SYS(__sys)
 
 } // namespace firepony

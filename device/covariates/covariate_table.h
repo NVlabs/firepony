@@ -147,7 +147,62 @@ struct covariate_table_base
 };
 
 // covariate table implementation
-template <target_system system, typename covariate_value> using covariate_table = covariate_table_base<system, covariate_value>;
+template <target_system system, typename covariate_value>
+struct covariate_table
+{ };
+
+template <typename covariate_value>
+struct covariate_table<cuda, covariate_value> : public covariate_table_base<cuda, covariate_value>
+{
+    typedef covariate_table_base<cuda, covariate_value> base;
+    using base::base;
+};
+
+template <typename covariate_value>
+struct covariate_table<host, covariate_value> : public covariate_table_base<host, covariate_value>
+{
+    typedef covariate_table_base<host, covariate_value> base;
+    using base::base;
+
+    // per-thread storage for covariate table
+    typedef std::map<covariate_key, covariate_value> covariate_map;
+    // maps thread-id to a covariate map
+    // pointers are used here because this code needs to be able to compile for GPU as well
+    persistent_allocation<host, covariate_map *> key_value_maps;
+
+    virtual void init(void) override
+    {
+        if (key_value_maps.size() == 0)
+        {
+            key_value_maps.resize(command_line_options.cpu_threads);
+            for(uint32 i = 0; i < key_value_maps.size(); i++)
+            {
+                key_value_maps[i] = new covariate_map;
+            }
+        }
+    }
+
+    virtual void flush(void) override
+    {
+        fprintf(stderr, "expanding %u covariate maps\n", key_value_maps.size());
+        uint64 count = 0;
+        uint64 map_count = 0;
+
+        for(auto *map : key_value_maps)
+        {
+            map_count++;
+            for(const auto& node : *map)
+            {
+                count++;
+                base::push_back(node.first, node.second);
+            }
+
+            map->clear();
+        }
+
+        fprintf(stderr, ".. %lu maps %lu elements\n", map_count, count);
+    }
+};
 
 template <target_system system> using covariate_observation_table = covariate_table<system, covariate_observation_value>;
 template <target_system system> using covariate_empirical_table = covariate_table<system, covariate_empirical_value>;

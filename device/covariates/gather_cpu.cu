@@ -28,53 +28,30 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#pragma once
-
 #include "../../types.h"
 #include "../alignment_data_device.h"
 #include "../firepony_context.h"
+#include "covariates.h"
+#include "../expected_error.h"
+#include "../empirical_quality.h"
+
+#include "packer_context.h"
+#include "packer_cycle_illumina.h"
+#include "packer_quality_score.h"
+#include "generate_event_key.h"
+
+#include "../primitives/util.h"
+
+#include "../../table_formatter.h"
+
+#include <thrust/functional.h>
 
 namespace firepony {
 
-// generate a single event key using the given covariate packer
-template <target_system system, typename covariate_packer>
-LIFT_HOST_DEVICE static bool generate_covariate_event_key(covariate_key_set& keys,
-                                                          firepony_context<system>& ctx, const alignment_batch_device<system>& batch,
-                                                          const uint32 cigar_event_index)
+template <>
+void gather_covariates<host>(firepony_context<host>& context, const alignment_batch<host>& batch)
 {
-    const uint32 read_index = ctx.cigar.cigar_event_read_index[cigar_event_index];
-
-    if (read_index == uint32(-1))
-    {
-        return false;
-    }
-
-    const auto idx = batch.crq_index(read_index);
-    const auto read_bp_offset = ctx.cigar.cigar_event_read_coordinates[cigar_event_index];
-
-    if (read_bp_offset == uint16(-1))
-    {
-        return false;
-    }
-
-    if (read_bp_offset < ctx.cigar.read_window_clipped[read_index].x ||
-        read_bp_offset > ctx.cigar.read_window_clipped[read_index].y)
-    {
-        return false;
-    }
-
-    if (ctx.active_location_list[idx.read_start + read_bp_offset] == 0)
-    {
-        return false;
-    }
-
-    if (ctx.cigar.cigar_events[cigar_event_index] == cigar_event::S)
-    {
-        return false;
-    }
-
-    keys = covariate_packer::chain::encode(ctx, batch, read_index, read_bp_offset, cigar_event_index, covariate_key_set{0, 0, 0});
-    return true;
+    // xxxnsubtil: implement!
 }
 
 } // namespace firepony

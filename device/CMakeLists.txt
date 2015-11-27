@@ -32,6 +32,8 @@ covariates/bit_packers/read_group.h
 covariates/covariate_table.cu
 covariates/covariate_table.h
 covariates/covariates.h
+covariates/gather_cpu.cu
+covariates/gather_gpu.cu
 covariates/generate_event_key.h
 covariates/covariates.cu
 covariates/packer_context.h
