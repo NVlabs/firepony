@@ -37,7 +37,7 @@
 #include "../sequence_database.h"
 #include "../variant_database.h"
 #include "snp_filter.h"
-#include "covariates.h"
+#include "covariates/covariates.h"
 #include "cigar.h"
 #include "baq.h"
 #include "fractional_errors.h"

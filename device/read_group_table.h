@@ -28,7 +28,7 @@
 #pragma once
 
 #include "device_types.h"
-#include "covariate_table.h"
+#include "covariates/covariate_table.h"
 
 namespace firepony {
 

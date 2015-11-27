@@ -28,20 +28,21 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "../types.h"
-#include "alignment_data_device.h"
-#include "firepony_context.h"
+#include "../../types.h"
+#include "../alignment_data_device.h"
+#include "../firepony_context.h"
 #include "covariates.h"
-#include "expected_error.h"
-#include "empirical_quality.h"
+#include "../expected_error.h"
+#include "../empirical_quality.h"
 
-#include "covariates/packer_context.h"
-#include "covariates/packer_cycle_illumina.h"
-#include "covariates/packer_quality_score.h"
+#include "packer_context.h"
+#include "packer_cycle_illumina.h"
+#include "packer_quality_score.h"
+#include "generate_event_key.h"
 
-#include "primitives/util.h"
+#include "../primitives/util.h"
 
-#include "../table_formatter.h"
+#include "../../table_formatter.h"
 
 #include <thrust/functional.h>
 
@@ -59,47 +60,6 @@ struct covariate_packer_table
     { }
 };
 
-// generate a single event key using the given covariate packer
-template <target_system system, typename covariate_packer>
-LIFT_HOST_DEVICE static bool generate_event_key(covariate_key_set& keys,
-                                                firepony_context<system>& ctx, const alignment_batch_device<system>& batch,
-                                                const uint32 cigar_event_index)
-{
-    const uint32 read_index = ctx.cigar.cigar_event_read_index[cigar_event_index];
-
-    if (read_index == uint32(-1))
-    {
-        return false;
-    }
-
-    const auto idx = batch.crq_index(read_index);
-    const auto read_bp_offset = ctx.cigar.cigar_event_read_coordinates[cigar_event_index];
-
-    if (read_bp_offset == uint16(-1))
-    {
-        return false;
-    }
-
-    if (read_bp_offset < ctx.cigar.read_window_clipped[read_index].x ||
-        read_bp_offset > ctx.cigar.read_window_clipped[read_index].y)
-    {
-        return false;
-    }
-
-    if (ctx.active_location_list[idx.read_start + read_bp_offset] == 0)
-    {
-        return false;
-    }
-
-    if (ctx.cigar.cigar_events[cigar_event_index] == cigar_event::S)
-    {
-        return false;
-    }
-
-    keys = covariate_packer::chain::encode(ctx, batch, read_index, read_bp_offset, cigar_event_index, covariate_key_set{0, 0, 0});
-    return true;
-}
-
 // updates a set of covariate tables for a given event
 template <target_system system, typename packer_table, typename... packer_chain>
 LIFT_HOST_DEVICE static void covariate_gatherer(firepony_context<system>& ctx, const alignment_batch_device<system>& batch, const uint32 cigar_event_index, packer_table& first, packer_chain&... next)
@@ -109,7 +69,7 @@ LIFT_HOST_DEVICE static void covariate_gatherer(firepony_context<system>& ctx, c
     covariate_key_set keys;
     bool key_valid;
 
-    key_valid = generate_event_key<system, typename packer_table::packer>(keys, ctx, batch, cigar_event_index);
+    key_valid = generate_covariate_event_key<system, typename packer_table::packer>(keys, ctx, batch, cigar_event_index);
 
     if (key_valid)
     {
@@ -190,6 +150,7 @@ struct is_key_value_pair_valid : public thrust::unary_function<Tuple, bool>
 };
 
 // processes a batch of reads and updates covariate table data for a given table
+// uses the filer/sort/pack algorithm
 template <typename covariate_packer, target_system system>
 static void build_covariates_table(covariate_observation_table<system>& table, firepony_context<system>& context, const alignment_batch<system>& batch)
 {

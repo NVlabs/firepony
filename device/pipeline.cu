@@ -40,7 +40,7 @@
 #include "baq.h"
 #include "firepony_context.h"
 #include "cigar.h"
-#include "covariates.h"
+#include "covariates/covariates.h"
 #include "fractional_errors.h"
 #include "read_filters.h"
 #include "read_group_table.h"

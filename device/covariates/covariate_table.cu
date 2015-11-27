@@ -28,8 +28,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "../types.h"
-#include "firepony_context.h"
+#include "../../types.h"
+#include "../firepony_context.h"
 #include "covariates.h"
 #include "covariate_table.h"
 
