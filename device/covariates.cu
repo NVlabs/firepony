@@ -47,58 +47,116 @@
 
 namespace firepony {
 
-// accumulates events from a read batch into a given covariate table
-template <target_system system, typename covariate_packer>
-struct covariate_gatherer : public lambda<system>
+// helper struct for keeping track of covariate packers together with output tables
+template <target_system system, typename _covariate_packer>
+struct covariate_packer_table
 {
-    LAMBDA_INHERIT;
+    typedef _covariate_packer packer;
+    covariate_observation_table<system> table;
 
-    CUDA_HOST_DEVICE void operator()(const uint32 cigar_event_index)
+    covariate_packer_table(covariate_observation_table<system> table)
+        : table(table)
+    { }
+};
+
+// generate a single event key using the given covariate packer
+template <target_system system, typename covariate_packer>
+LIFT_HOST_DEVICE static bool generate_event_key(covariate_key_set& keys,
+                                                firepony_context<system>& ctx, const alignment_batch_device<system>& batch,
+                                                const uint32 cigar_event_index)
+{
+    const uint32 read_index = ctx.cigar.cigar_event_read_index[cigar_event_index];
+
+    if (read_index == uint32(-1))
+    {
+        return false;
+    }
+
+    const auto idx = batch.crq_index(read_index);
+    const auto read_bp_offset = ctx.cigar.cigar_event_read_coordinates[cigar_event_index];
+
+    if (read_bp_offset == uint16(-1))
+    {
+        return false;
+    }
+
+    if (read_bp_offset < ctx.cigar.read_window_clipped[read_index].x ||
+        read_bp_offset > ctx.cigar.read_window_clipped[read_index].y)
+    {
+        return false;
+    }
+
+    if (ctx.active_location_list[idx.read_start + read_bp_offset] == 0)
+    {
+        return false;
+    }
+
+    if (ctx.cigar.cigar_events[cigar_event_index] == cigar_event::S)
+    {
+        return false;
+    }
+
+    keys = covariate_packer::chain::encode(ctx, batch, read_index, read_bp_offset, cigar_event_index, covariate_key_set{0, 0, 0});
+    return true;
+}
+
+// updates a set of covariate tables for a given event
+template <target_system system, typename packer_table, typename... packer_chain>
+LIFT_HOST_DEVICE static void covariate_gatherer(firepony_context<system>& ctx, const alignment_batch_device<system>& batch, const uint32 cigar_event_index, packer_table& first, packer_chain&... next)
+{
+    auto& table = first.table;
+
+    covariate_key_set keys;
+    bool key_valid;
+
+    key_valid = generate_event_key<system, typename packer_table::packer>(keys, ctx, batch, cigar_event_index);
+
+    if (key_valid)
     {
         const uint32 read_index = ctx.cigar.cigar_event_read_index[cigar_event_index];
+        const auto idx = batch.crq_index(read_index);
+        const auto read_bp_offset = ctx.cigar.cigar_event_read_coordinates[cigar_event_index];
 
-        if (read_index == uint32(-1))
-        {
-            // inactive read
-            return;
-        }
+        table.keys  [cigar_event_index * 3 + 0] = keys.M;
+        table.values[cigar_event_index * 3 + 0].observations = 1;
+        table.values[cigar_event_index * 3 + 0].mismatches = ctx.fractional_error.snp_errors[idx.qual_start + read_bp_offset];
 
-        const CRQ_index idx = batch.crq_index(read_index);
-        const uint16 read_bp_offset = ctx.cigar.cigar_event_read_coordinates[cigar_event_index];
-        if (read_bp_offset == uint16(-1))
-        {
-            return;
-        }
+        table.keys  [cigar_event_index * 3 + 1] = keys.I;
+        table.values[cigar_event_index * 3 + 1].observations = 1;
+        table.values[cigar_event_index * 3 + 1].mismatches = ctx.fractional_error.insertion_errors[idx.qual_start + read_bp_offset];
 
-        if (read_bp_offset < ctx.cigar.read_window_clipped[read_index].x ||
-            read_bp_offset > ctx.cigar.read_window_clipped[read_index].y)
-        {
-            return;
-        }
+        table.keys  [cigar_event_index * 3 + 2] = keys.D;
+        table.values[cigar_event_index * 3 + 2].observations = 1;
+        table.values[cigar_event_index * 3 + 2].mismatches = ctx.fractional_error.deletion_errors[idx.qual_start + read_bp_offset];
+    }
 
-        if (ctx.active_location_list[idx.read_start + read_bp_offset] == 0)
-        {
-            return;
-        }
+    // recurse for next argument
+    covariate_gatherer<system, packer_chain...>(ctx, batch, cigar_event_index, next...);
+}
 
-        if (ctx.cigar.cigar_events[cigar_event_index] == cigar_event::S)
-        {
-            return;
-        }
+// terminator for covariate_gatherer
+template <target_system system>
+LIFT_HOST_DEVICE static void covariate_gatherer(firepony_context<system>&, const alignment_batch_device<system>&, const uint32)
+{ }
 
-        covariate_key_set keys = covariate_packer::chain::encode(ctx, batch, read_index, read_bp_offset, cigar_event_index, covariate_key_set{0, 0, 0});
+template <target_system system, typename packer_table>
+struct covariate_gatherer_single
+{
+    firepony_context<system> ctx;
+    const alignment_batch_device<system> batch;
+    packer_table packer;
 
-        ctx.covariates.scratch_table_space.keys  [cigar_event_index * 3 + 0] = keys.M;
-        ctx.covariates.scratch_table_space.values[cigar_event_index * 3 + 0].observations = 1;
-        ctx.covariates.scratch_table_space.values[cigar_event_index * 3 + 0].mismatches = ctx.fractional_error.snp_errors[idx.qual_start + read_bp_offset];
+    covariate_gatherer_single(firepony_context<system> ctx,
+                              const alignment_batch_device<system> batch,
+                              packer_table& packer)
+        : ctx(ctx),
+          batch(batch),
+          packer(packer)
+    { }
 
-        ctx.covariates.scratch_table_space.keys  [cigar_event_index * 3 + 1] = keys.I;
-        ctx.covariates.scratch_table_space.values[cigar_event_index * 3 + 1].observations = 1;
-        ctx.covariates.scratch_table_space.values[cigar_event_index * 3 + 1].mismatches = ctx.fractional_error.insertion_errors[idx.qual_start + read_bp_offset];
-
-        ctx.covariates.scratch_table_space.keys  [cigar_event_index * 3 + 2] = keys.D;
-        ctx.covariates.scratch_table_space.values[cigar_event_index * 3 + 2].observations = 1;
-        ctx.covariates.scratch_table_space.values[cigar_event_index * 3 + 2].mismatches = ctx.fractional_error.deletion_errors[idx.qual_start + read_bp_offset];
+    LIFT_HOST_DEVICE void operator() (const uint32 cigar_event_index)
+    {
+        covariate_gatherer<system, packer_table>(ctx, batch, cigar_event_index, packer);
     }
 };
 
@@ -155,9 +213,10 @@ static void build_covariates_table(covariate_observation_table<system>& table, f
                  covariate_key(-1));
 
     // generate keys into the scratch table
+    auto packer = covariate_packer_table<system, covariate_packer>(scratch_table);
     parallel<system>::for_each(thrust::make_counting_iterator(0u),
                                thrust::make_counting_iterator(0u) + context.cigar.cigar_event_read_coordinates.size(),
-                               covariate_gatherer<system, covariate_packer>(context, batch.device));
+                               covariate_gatherer_single<system, decltype(packer)>(context, batch.device, packer));
 
     covariates_gather.stop();
 
@@ -340,4 +399,3 @@ void compute_empirical_quality_scores(firepony_context<system>& context)
 INSTANTIATE(compute_empirical_quality_scores);
 
 } // namespace firepony
-
