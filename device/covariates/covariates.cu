@@ -282,6 +282,15 @@ void gather_covariates(firepony_context<system>& context, const alignment_batch<
 }
 INSTANTIATE(gather_covariates);
 
+template <target_system system> void flush_covariates(firepony_context<system>& context)
+{
+    auto& cv = context.covariates;
+    cv.quality.flush();
+    cv.cycle.flush();
+    cv.context.flush();
+}
+INSTANTIATE(flush_covariates);
+
 template <target_system system> void postprocess_covariates(firepony_context<system>& context)
 {
     auto& cv = context.covariates;

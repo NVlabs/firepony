@@ -31,6 +31,9 @@
 #pragma once
 
 #include "../../types.h"
+#include "../../command_line.h"
+
+#include <map>
 
 namespace firepony {
 
@@ -57,12 +60,20 @@ struct covariate_empirical_value
 // covariate table
 // stores a list of key-value pairs, where the key is a covariate_key and the value is either covariate_observation_value or covariate_empirical_value
 template <target_system system, typename covariate_value>
-struct covariate_table
+struct covariate_table_base
 {
     typedef covariate_value value_type;
 
     persistent_allocation<system, covariate_key> keys;
     persistent_allocation<system, covariate_value> values;
+
+    // set up the covariate table prior to generating keys into it
+    virtual void init(void)
+    { }
+
+    // post-process accumulated table data to generate key/value pairs
+    virtual void flush(void)
+    { }
 
     void resize(size_t size)
     {
@@ -76,8 +87,14 @@ struct covariate_table
         return keys.size();
     }
 
+    void push_back(const covariate_key& key, const covariate_value& value)
+    {
+        keys.push_back(key);
+        values.push_back(value);
+    }
+
     template <target_system other_system>
-    void copyfrom(covariate_table<other_system, covariate_value>& other)
+    void copyfrom(covariate_table_base<other_system, covariate_value>& other)
     {
         keys.resize(other.keys.size());
         values.resize(other.values.size());
@@ -88,7 +105,7 @@ struct covariate_table
 
     // cross-device table concatenation
     template <target_system other_system>
-    void concat(const lift::compute_device& my_device, const lift::compute_device& other_device, covariate_table<other_system, covariate_value>& other)
+    void concat(const lift::compute_device& my_device, const lift::compute_device& other_device, covariate_table_base<other_system, covariate_value>& other)
     {
         size_t off = size();
 
@@ -128,6 +145,9 @@ struct covariate_table
         return v;
     }
 };
+
+// covariate table implementation
+template <target_system system, typename covariate_value> using covariate_table = covariate_table_base<system, covariate_value>;
 
 template <target_system system> using covariate_observation_table = covariate_table<system, covariate_observation_value>;
 template <target_system system> using covariate_empirical_table = covariate_table<system, covariate_empirical_value>;

@@ -47,6 +47,7 @@
 namespace firepony {
 
 template <target_system system> void firepony_process_batch(firepony_context<system>& context, const alignment_batch<system>& batch);
+template <target_system system> void firepony_pipeline_end(firepony_context<system>& context);
 template <target_system system> void firepony_postprocess(firepony_context<system>& context);
 
 template <target_system system_dst, target_system system_src>
@@ -222,6 +223,8 @@ private:
             // return it to the reader for reuse
             reader->retire_batch(h_batch);
         }
+
+        firepony_pipeline_end(*context);
     }
 };
 

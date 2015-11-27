@@ -55,6 +55,7 @@ struct covariates_context
 };
 
 template <target_system system> void gather_covariates(firepony_context<system>& context, const alignment_batch<system>& batch);
+template <target_system system> void flush_covariates(firepony_context<system>& context);
 template <target_system system> void postprocess_covariates(firepony_context<system>& context);
 template <target_system system> void output_covariates(firepony_context<system>& context);
 template <target_system system> void compute_empirical_quality_scores(firepony_context<system>& context);
