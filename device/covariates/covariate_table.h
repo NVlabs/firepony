@@ -186,7 +186,6 @@ struct covariate_table<host, covariate_value> : public covariate_table_base<host
 
     virtual void flush(void) override
     {
-        fprintf(stderr, "expanding %u covariate maps\n", key_value_maps.size());
         uint64 count = 0;
         uint64 map_count = 0;
 
@@ -201,8 +200,6 @@ struct covariate_table<host, covariate_value> : public covariate_table_base<host
 
             map->clear();
         }
-
-        fprintf(stderr, ".. %lu maps %lu elements\n", map_count, count);
     }
 
     covariate_observation_value& value(const uint32 tid, const covariate_key key)

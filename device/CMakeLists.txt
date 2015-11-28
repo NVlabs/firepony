@@ -38,6 +38,7 @@ covariates/gather_cpu.cu
 covariates/gather_gpu.cu
 covariates/generate_event_key.h
 covariates/high_quality_window.h
+covariates/key_valid.h
 covariates/packer_context.h
 covariates/packer_cycle_illumina.h
 covariates/packer_quality_score.h

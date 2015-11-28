@@ -40,6 +40,7 @@
 #include "packer_quality_score.h"
 #include "generate_event_key.h"
 #include "high_quality_window.h"
+#include "key_valid.h"
 #include "gather.h"
 
 #include "../primitives/util.h"
@@ -68,17 +69,26 @@ static void covariate_gatherer(const uint32 tid,
         const auto idx = batch.crq_index(read_index);
         const auto read_bp_offset = ctx.cigar.cigar_event_read_coordinates[cigar_event_index];
 
-        auto& val_M = table.value(tid, keys.M);
-        val_M.observations++;
-        val_M.mismatches += ctx.fractional_error.snp_errors[idx.qual_start + read_bp_offset];
+        if (is_key_valid<typename packer_table::packer>::check(keys.M))
+        {
+            auto& val_M = table.value(tid, keys.M);
+            val_M.observations++;
+            val_M.mismatches += ctx.fractional_error.snp_errors[idx.qual_start + read_bp_offset];
+        }
 
-        auto& val_I = table.value(tid, keys.I);
-        val_I.observations++;
-        val_I.mismatches += ctx.fractional_error.insertion_errors[idx.qual_start + read_bp_offset];
+        if (is_key_valid<typename packer_table::packer>::check(keys.I))
+        {
+            auto& val_I = table.value(tid, keys.I);
+            val_I.observations++;
+            val_I.mismatches += ctx.fractional_error.insertion_errors[idx.qual_start + read_bp_offset];
+        }
 
-        auto& val_D = table.value(tid, keys.D);
-        val_D.observations++;
-        val_D.mismatches += ctx.fractional_error.deletion_errors[idx.qual_start + read_bp_offset];
+        if (is_key_valid<typename packer_table::packer>::check(keys.D))
+        {
+            auto& val_D = table.value(tid, keys.D);
+            val_D.observations++;
+            val_D.mismatches += ctx.fractional_error.deletion_errors[idx.qual_start + read_bp_offset];
+        }
     }
 
     // recurse for next argument

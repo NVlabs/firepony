@@ -40,6 +40,7 @@
 #include "packer_quality_score.h"
 #include "generate_event_key.h"
 #include "high_quality_window.h"
+#include "key_valid.h"
 #include "gather.h"
 
 #include "../primitives/util.h"
@@ -110,25 +111,6 @@ struct covariate_gatherer_single
     }
 };
 
-// functor that determines if a key is valid
-// note: operator() returns a uint32 to allow for composition of this functor with reduction operators
-template <typename covariate_packer>
-struct is_key_valid : public thrust::unary_function<covariate_key, uint32>
-{
-    __device__ uint32 operator() (const covariate_key key)
-    {
-        constexpr bool sparse = covariate_packer::chain::is_sparse(covariate_packer::TargetCovariate);
-
-        if (key == covariate_key(-1) ||
-            (sparse && covariate_packer::decode(key, covariate_packer::TargetCovariate) == covariate_packer::chain::invalid_key(covariate_packer::TargetCovariate)))
-        {
-            return 0;
-        } else {
-            return 1;
-        }
-    }
-};
-
 template <typename covariate_packer, typename Tuple>
 struct is_key_value_pair_valid : public thrust::unary_function<Tuple, bool>
 {
@@ -175,9 +157,9 @@ static void build_covariates_table(covariate_observation_table<cuda>& table, fir
 
     // count valid keys
     uint32 valid_keys = parallel<cuda>::sum(thrust::make_transform_iterator(scratch_table.keys.begin(),
-                                                                              is_key_valid<covariate_packer>()),
-                                              scratch_table.keys.size(),
-                                              context.temp_storage);
+                                                                            is_key_valid<covariate_packer>()),
+                                            scratch_table.keys.size(),
+                                            context.temp_storage);
 
     if (valid_keys)
     {
@@ -186,13 +168,13 @@ static void build_covariates_table(covariate_observation_table<cuda>& table, fir
         table.resize(table.size() + valid_keys);
 
         parallel<cuda>::copy_if(thrust::make_zip_iterator(thrust::make_tuple(scratch_table.keys.begin(),
-                                                                               scratch_table.values.begin())),
-                                  scratch_table.keys.size(),
-                                  thrust::make_zip_iterator(thrust::make_tuple(table.keys.begin() + off,
-                                                                               table.values.begin() + off)),
-                                  is_key_value_pair_valid<covariate_packer,
-                                                          thrust::tuple<const covariate_key&, const typename covariate_observation_table<cuda>::value_type&> >(),
-                                  context.temp_storage);
+                                                                             scratch_table.values.begin())),
+                                scratch_table.keys.size(),
+                                thrust::make_zip_iterator(thrust::make_tuple(table.keys.begin() + off,
+                                                                             table.values.begin() + off)),
+                                is_key_value_pair_valid<covariate_packer,
+                                                        thrust::tuple<const covariate_key&, const typename covariate_observation_table<cuda>::value_type&> >(),
+                                context.temp_storage);
     }
 
     covariates_filter.stop();
