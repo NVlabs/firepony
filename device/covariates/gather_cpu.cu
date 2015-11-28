@@ -39,6 +39,8 @@
 #include "packer_cycle_illumina.h"
 #include "packer_quality_score.h"
 #include "generate_event_key.h"
+#include "high_quality_window.h"
+#include "gather.h"
 
 #include "../primitives/util.h"
 
@@ -48,10 +50,97 @@
 
 namespace firepony {
 
+// updates a set of covariate tables for a given event
+template <typename packer_table, typename... packer_chain>
+static void covariate_gatherer(const uint32 tid,
+                               firepony_context<host>& ctx, const alignment_batch_device<host>& batch, const uint32 cigar_event_index, packer_table& first, packer_chain&... next)
+{
+    auto& table = first.table;
+
+    covariate_key_set keys;
+    bool key_valid;
+
+    key_valid = generate_covariate_event_key<host, typename packer_table::packer>(keys, ctx, batch, cigar_event_index);
+
+    if (key_valid)
+    {
+        const uint32 read_index = ctx.cigar.cigar_event_read_index[cigar_event_index];
+        const auto idx = batch.crq_index(read_index);
+        const auto read_bp_offset = ctx.cigar.cigar_event_read_coordinates[cigar_event_index];
+
+        auto& val_M = table.value(tid, keys.M);
+        val_M.observations++;
+        val_M.mismatches += ctx.fractional_error.snp_errors[idx.qual_start + read_bp_offset];
+
+        auto& val_I = table.value(tid, keys.I);
+        val_I.observations++;
+        val_I.mismatches += ctx.fractional_error.insertion_errors[idx.qual_start + read_bp_offset];
+
+        auto& val_D = table.value(tid, keys.D);
+        val_D.observations++;
+        val_D.mismatches += ctx.fractional_error.deletion_errors[idx.qual_start + read_bp_offset];
+    }
+
+    // recurse for next argument
+    covariate_gatherer<packer_chain...>(tid, ctx, batch, cigar_event_index, next...);
+}
+
+// terminator for covariate_gatherer
+template <typename... packer_chain>
+static void covariate_gatherer(const uint32, firepony_context<host>&, const alignment_batch_device<host>&, const uint32)
+{ }
+
+struct covariate_gather_worker : public lambda<host>
+{
+    LAMBDA_INHERIT_SYS(host);
+
+    void operator() (const uint32 tid)
+    {
+        auto& cv = ctx.covariates;
+
+        auto t_qual = make_packer_table<covariate_packer_quality_score<host>>(cv.quality);
+        auto t_cycle = make_packer_table<covariate_packer_cycle_illumina<host>>(cv.cycle);
+        auto t_context = make_packer_table<covariate_packer_context<host>>(cv.context);
+
+        const uint32 num_threads = lift::compute_device_host::available_threads();
+        constexpr uint32 grain_size = 1000;
+
+        for(uint32 start = grain_size * tid;
+            start < ctx.cigar.cigar_event_read_coordinates.size();
+            start += grain_size * num_threads)
+        {
+            const uint32 stop = std::min(start + grain_size, ctx.cigar.cigar_event_read_coordinates.size());
+
+            for(uint32 cigar_event_index = start; cigar_event_index < stop; cigar_event_index++)
+            {
+                covariate_gatherer(tid, ctx, batch, cigar_event_index,
+                                   t_qual, t_cycle, t_context);
+            }
+        }
+    }
+};
+
 template <>
 void gather_covariates<host>(firepony_context<host>& context, const alignment_batch<host>& batch)
 {
-    // xxxnsubtil: implement!
+    auto& cv = context.covariates;
+
+    // compute the "high quality" windows (i.e., clip off low quality ends from each read)
+    cv.high_quality_window.resize(batch.device.num_reads);
+    parallel<host>::for_each(context.active_read_list.begin(),
+                             context.active_read_list.end(),
+                             compute_high_quality_windows<host>(context, batch.device));
+
+    cv.quality.init();
+    cv.cycle.init();
+    cv.context.init();
+
+    parallel<host>::for_each(lift::compute_device_host::available_threads(),
+                             covariate_gather_worker(context, batch.device));
+
+    // build_covariates_table<covariate_packer_quality_score<cuda> >(cv.quality, context, batch);
+    // build_covariates_table<covariate_packer_cycle_illumina<cuda> >(cv.cycle, context, batch);
+    // build_covariates_table<covariate_packer_context<cuda> >(cv.context, context, batch);
 }
 
 } // namespace firepony

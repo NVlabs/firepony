@@ -31,11 +31,13 @@ covariates/bit_packers/quality_score.h
 covariates/bit_packers/read_group.h
 covariates/covariate_table.cu
 covariates/covariate_table.h
+covariates/covariates.cu
 covariates/covariates.h
+covariates/gather.h
 covariates/gather_cpu.cu
 covariates/gather_gpu.cu
 covariates/generate_event_key.h
-covariates/covariates.cu
+covariates/high_quality_window.h
 covariates/packer_context.h
 covariates/packer_cycle_illumina.h
 covariates/packer_quality_score.h

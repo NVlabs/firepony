@@ -35,6 +35,8 @@
 
 #include <map>
 
+#include <lift/sys/host/compute_device_host.h>
+
 namespace firepony {
 
 typedef uint32 covariate_key;
@@ -174,7 +176,7 @@ struct covariate_table<host, covariate_value> : public covariate_table_base<host
     {
         if (key_value_maps.size() == 0)
         {
-            key_value_maps.resize(command_line_options.cpu_threads);
+            key_value_maps.resize(lift::compute_device_host::available_threads());
             for(uint32 i = 0; i < key_value_maps.size(); i++)
             {
                 key_value_maps[i] = new covariate_map;
@@ -201,6 +203,18 @@ struct covariate_table<host, covariate_value> : public covariate_table_base<host
         }
 
         fprintf(stderr, ".. %lu maps %lu elements\n", map_count, count);
+    }
+
+    covariate_observation_value& value(const uint32 tid, const covariate_key key)
+    {
+        auto& map = *key_value_maps[tid];
+
+        if (map.find(key) == map.end())
+        {
+            map[key] = { 0, 0 };
+        }
+
+        return map[key];
     }
 };
 

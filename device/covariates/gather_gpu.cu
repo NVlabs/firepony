@@ -39,6 +39,8 @@
 #include "packer_cycle_illumina.h"
 #include "packer_quality_score.h"
 #include "generate_event_key.h"
+#include "high_quality_window.h"
+#include "gather.h"
 
 #include "../primitives/util.h"
 
@@ -47,18 +49,6 @@
 #include <thrust/functional.h>
 
 namespace firepony {
-
-// helper struct for keeping track of covariate packers together with output tables
-template <typename _covariate_packer>
-struct covariate_packer_table
-{
-    typedef _covariate_packer packer;
-    covariate_observation_table<cuda> table;
-
-    covariate_packer_table(covariate_observation_table<cuda> table)
-        : table(table)
-    { }
-};
 
 // updates a set of covariate tables for a given event
 template <typename packer_table, typename... packer_chain>
@@ -174,10 +164,10 @@ static void build_covariates_table(covariate_observation_table<cuda>& table, fir
                  covariate_key(-1));
 
     // generate keys into the scratch table
-    auto packer = covariate_packer_table<covariate_packer>(scratch_table);
+    auto packer = make_packer_table<covariate_packer>(scratch_table);
     parallel<cuda>::for_each(thrust::make_counting_iterator(0u),
-                               thrust::make_counting_iterator(0u) + context.cigar.cigar_event_read_coordinates.size(),
-                               covariate_gatherer_single<decltype(packer)>(context, batch.device, packer));
+                             thrust::make_counting_iterator(0u) + context.cigar.cigar_event_read_coordinates.size(),
+                             covariate_gatherer_single<decltype(packer)>(context, batch.device, packer));
 
     covariates_gather.stop();
 
@@ -231,38 +221,6 @@ static void build_covariates_table(covariate_observation_table<cuda>& table, fir
     }
 }
 
-struct compute_high_quality_windows : public lambda<cuda>
-{
-    LAMBDA_INHERIT_SYS(cuda);
-
-    enum {
-        // any bases with q <= LOW_QUAL_TAIL are considered low quality
-        LOW_QUAL_TAIL = 2
-    };
-
-    LIFT_DEVICE void operator() (const uint32 read_index)
-    {
-        const CRQ_index idx = batch.crq_index(read_index);
-
-        const auto& window = ctx.cigar.read_window_clipped[read_index];
-        auto& low_qual_window = ctx.covariates.high_quality_window[read_index];
-
-        low_qual_window = window;
-
-        while(batch.qualities[idx.qual_start + low_qual_window.x] <= LOW_QUAL_TAIL &&
-                low_qual_window.x < low_qual_window.y)
-        {
-            low_qual_window.x++;
-        }
-
-        while(batch.qualities[idx.qual_start + low_qual_window.y] <= LOW_QUAL_TAIL &&
-                low_qual_window.y > low_qual_window.x)
-        {
-            low_qual_window.y--;
-        }
-    }
-};
-
 template <>
 void gather_covariates<cuda>(firepony_context<cuda>& context, const alignment_batch<cuda>& batch)
 {
@@ -271,8 +229,8 @@ void gather_covariates<cuda>(firepony_context<cuda>& context, const alignment_ba
     // compute the "high quality" windows (i.e., clip off low quality ends from each read)
     cv.high_quality_window.resize(batch.device.num_reads);
     parallel<cuda>::for_each(context.active_read_list.begin(),
-                               context.active_read_list.end(),
-                               compute_high_quality_windows(context, batch.device));
+                             context.active_read_list.end(),
+                             compute_high_quality_windows<cuda>(context, batch.device));
 
     build_covariates_table<covariate_packer_quality_score<cuda> >(cv.quality, context, batch);
     build_covariates_table<covariate_packer_cycle_illumina<cuda> >(cv.cycle, context, batch);
