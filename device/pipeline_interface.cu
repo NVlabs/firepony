@@ -169,8 +169,7 @@ struct firepony_device_pipeline : public firepony_pipeline
         tbb::task_scheduler_init init(tbb::task_scheduler_init::deferred);
         if (system == host)
         {
-            lift::compute_device_host& d = (lift::compute_device_host&)*device;
-            init.initialize(d.num_threads);
+            init.initialize(command_line_options.cpu_threads);
         }
 
         firepony_postprocess(*context);
@@ -186,8 +185,7 @@ private:
         tbb::task_scheduler_init init(tbb::task_scheduler_init::deferred);
         if (system == host)
         {
-            lift::compute_device_host& d = (lift::compute_device_host&)*device;
-            init.initialize(d.num_threads);
+            init.initialize(command_line_options.cpu_threads);
         }
 
         timer<host> io_timer;

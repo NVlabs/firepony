@@ -102,7 +102,7 @@ struct covariate_gather_worker : public lambda<host>
         auto t_cycle = make_packer_table<covariate_packer_cycle_illumina<host>>(cv.cycle);
         auto t_context = make_packer_table<covariate_packer_context<host>>(cv.context);
 
-        const uint32 num_threads = lift::compute_device_host::available_threads();
+        const uint32 num_threads = command_line_options.cpu_threads;
         constexpr uint32 grain_size = 1000;
 
         for(uint32 start = grain_size * tid;
@@ -135,12 +135,8 @@ void gather_covariates<host>(firepony_context<host>& context, const alignment_ba
     cv.cycle.init();
     cv.context.init();
 
-    parallel<host>::for_each(lift::compute_device_host::available_threads(),
+    parallel<host>::for_each(command_line_options.cpu_threads,
                              covariate_gather_worker(context, batch.device));
-
-    // build_covariates_table<covariate_packer_quality_score<cuda> >(cv.quality, context, batch);
-    // build_covariates_table<covariate_packer_cycle_illumina<cuda> >(cv.cycle, context, batch);
-    // build_covariates_table<covariate_packer_context<cuda> >(cv.context, context, batch);
 }
 
 } // namespace firepony

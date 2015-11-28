@@ -176,7 +176,7 @@ struct covariate_table<host, covariate_value> : public covariate_table_base<host
     {
         if (key_value_maps.size() == 0)
         {
-            key_value_maps.resize(lift::compute_device_host::available_threads());
+            key_value_maps.resize(command_line_options.cpu_threads);
             for(uint32 i = 0; i < key_value_maps.size(); i++)
             {
                 key_value_maps[i] = new covariate_map;
