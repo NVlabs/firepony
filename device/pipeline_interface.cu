@@ -197,7 +197,6 @@ private:
             io_timer.start();
             h_batch = reader->get_batch();
             io_timer.stop();
-            statistics().io.add(io_timer);
 
             if (h_batch == nullptr)
             {
@@ -223,6 +222,8 @@ private:
         }
 
         firepony_pipeline_end(*context);
+
+        statistics().io.add(io_timer);
     }
 };
 
