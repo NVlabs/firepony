@@ -263,11 +263,17 @@ bool alignment_file::next_batch(alignment_batch_host *batch, uint32 data_mask, r
     for(read_id = 0; read_id < batch_size; read_id++)
     {
         int ret;
+
+        times.htslib.start();
         ret = sam_read1(fp, bam_header, data);
+        times.htslib.stop();
+
         if (ret < 0)
         {
             break;
         }
+
+        times.repack.start();
 
         batch->num_reads++;
         batch->name.push_back(bam_get_qname(data));
@@ -428,6 +434,8 @@ bool alignment_file::next_batch(alignment_batch_host *batch, uint32 data_mask, r
                 }
             }
         }
+
+        times.repack.stop();
     }
 
     if (read_id == 0)

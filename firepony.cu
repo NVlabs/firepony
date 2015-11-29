@@ -408,15 +408,22 @@ int main(int argc, char **argv)
     fprintf(stderr, " compute: %f\n", wall_clock.elapsed_time());
     fprintf(stderr, "\n");
 
+    fprintf(stderr, "alignment data loader:\n");
+    fprintf(stderr, " SAM/BAM decoding: %f\n", reader.get_times().htslib.elapsed_time());
+    fprintf(stderr, " data shuffling: %f\n", reader.get_times().repack.elapsed_time());
+    fprintf(stderr, "\n");
+
     if (compute_devices.size() > 1)
-        fprintf(stderr, "aggregate statistics:\n");
+        fprintf(stderr, "aggregate compute times:\n");
+    else
+        fprintf(stderr, "compute times:\n");
 
     print_statistics(wall_clock, aggregate_stats, compute_devices.size());
 
     if (compute_devices.size() > 1)
     {
         fprintf(stderr, "\n");
-        fprintf(stderr, "per-device statistics:\n");
+        fprintf(stderr, "per-device compute times:\n");
 
         for(uint32 i = 0; i < compute_devices.size(); i++)
         {

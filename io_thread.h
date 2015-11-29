@@ -126,6 +126,8 @@ struct io_thread
     alignment_batch_host *get_batch(void);
     void retire_batch(alignment_batch_host *batch);
 
+    alignment_file_timings get_times(void);
+
 private:
     void run(void);
 };

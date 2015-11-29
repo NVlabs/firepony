@@ -146,4 +146,9 @@ void io_thread::run(void)
     }
 }
 
+alignment_file_timings io_thread::get_times(void)
+{
+    return file.times;
+}
+
 } // namespace firepony

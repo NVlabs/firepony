@@ -38,7 +38,15 @@
 #include "../alignment_data.h"
 #include "reference.h"
 
+#include <lift/timer.h>
+
 namespace firepony {
+
+struct alignment_file_timings
+{
+    timer<host> htslib;
+    timer<host> repack;
+};
 
 struct alignment_file
 {
@@ -58,6 +66,7 @@ private:
 
 public:
     alignment_header_host header;
+    alignment_file_timings times;
 
     alignment_file(const char *fname);
     ~alignment_file();
