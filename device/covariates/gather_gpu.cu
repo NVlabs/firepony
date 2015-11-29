@@ -208,15 +208,22 @@ void gather_covariates<cuda>(firepony_context<cuda>& context, const alignment_ba
 {
     auto& cv = context.covariates;
 
+    timer<cuda> hq_window;
+    hq_window.start();
+
     // compute the "high quality" windows (i.e., clip off low quality ends from each read)
     cv.high_quality_window.resize(batch.device.num_reads);
     parallel<cuda>::for_each(context.active_read_list.begin(),
                              context.active_read_list.end(),
                              compute_high_quality_windows<cuda>(context, batch.device));
 
+    hq_window.stop();
+
     build_covariates_table<covariate_packer_quality_score<cuda> >(cv.quality, context, batch);
     build_covariates_table<covariate_packer_cycle_illumina<cuda> >(cv.cycle, context, batch);
     build_covariates_table<covariate_packer_context<cuda> >(cv.context, context, batch);
+
+    context.stats.covariates_hq_window.add(hq_window);
 }
 
 } // namespace firepony

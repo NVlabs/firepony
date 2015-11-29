@@ -75,6 +75,7 @@ struct pipeline_statistics // host-only
 #endif
     time_series baq_postprocess;
 
+    time_series covariates_hq_window;
     time_series covariates_gather;
     time_series covariates_filter;
     time_series covariates_sort;
@@ -113,6 +114,7 @@ struct pipeline_statistics // host-only
         baq_hmm_map += other.baq_hmm_map;
         baq_postprocess += other.baq_postprocess;
 
+        covariates_hq_window += other.covariates_hq_window;
         covariates_gather += other.covariates_gather;
         covariates_filter += other.covariates_filter;
         covariates_sort += other.covariates_sort;

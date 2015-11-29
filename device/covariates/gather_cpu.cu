@@ -135,18 +135,29 @@ void gather_covariates<host>(firepony_context<host>& context, const alignment_ba
 {
     auto& cv = context.covariates;
 
+    timer<host> timer_hq_window;
+    timer_hq_window.start();
+
     // compute the "high quality" windows (i.e., clip off low quality ends from each read)
     cv.high_quality_window.resize(batch.device.num_reads);
     parallel<host>::for_each(context.active_read_list.begin(),
                              context.active_read_list.end(),
                              compute_high_quality_windows<host>(context, batch.device));
 
+    timer_hq_window.stop();
+    context.stats.covariates_hq_window.add(timer_hq_window);
+
     cv.quality.init();
     cv.cycle.init();
     cv.context.init();
 
+    timer<host> timer_gather;
+    timer_gather.start();
     parallel<host>::for_each(command_line_options.cpu_threads,
                              covariate_gather_worker(context, batch.device));
+    timer_gather.stop();
+
+    context.stats.covariates_gather.add(timer_gather);
 }
 
 } // namespace firepony
