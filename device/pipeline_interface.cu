@@ -47,6 +47,7 @@
 namespace firepony {
 
 template <target_system system> void firepony_process_batch(firepony_context<system>& context, const alignment_batch<system>& batch);
+template <target_system system> void firepony_pipeline_end(firepony_context<system>& context);
 template <target_system system> void firepony_postprocess(firepony_context<system>& context);
 
 template <target_system system_dst, target_system system_src>
@@ -168,8 +169,7 @@ struct firepony_device_pipeline : public firepony_pipeline
         tbb::task_scheduler_init init(tbb::task_scheduler_init::deferred);
         if (system == host)
         {
-            lift::compute_device_host& d = (lift::compute_device_host&)*device;
-            init.initialize(d.num_threads);
+            init.initialize(command_line_options.cpu_threads);
         }
 
         firepony_postprocess(*context);
@@ -185,8 +185,7 @@ private:
         tbb::task_scheduler_init init(tbb::task_scheduler_init::deferred);
         if (system == host)
         {
-            lift::compute_device_host& d = (lift::compute_device_host&)*device;
-            init.initialize(d.num_threads);
+            init.initialize(command_line_options.cpu_threads);
         }
 
         timer<host> io_timer;
@@ -222,6 +221,8 @@ private:
             // return it to the reader for reuse
             reader->retire_batch(h_batch);
         }
+
+        firepony_pipeline_end(*context);
     }
 };
 

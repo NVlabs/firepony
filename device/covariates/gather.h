@@ -30,33 +30,29 @@
 
 #pragma once
 
-#include "../types.h"
-#include "covariate_table.h"
+#include "../../types.h"
+#include "../alignment_data_device.h"
+#include "../firepony_context.h"
+#include "covariates.h"
 
 namespace firepony {
 
-template <target_system system>
-struct covariates_context
+// helper struct for keeping track of covariate packers together with output tables
+template <target_system system, typename _covariate_packer>
+struct covariate_packer_table
 {
-    // read window after clipping low quality ends
-    persistent_allocation<system, ushort2> high_quality_window;
+    typedef _covariate_packer packer;
+    covariate_observation_table<system> table;
 
-    covariate_observation_table<system> scratch_table_space;
-
-    covariate_observation_table<system> quality;
-    covariate_observation_table<system> cycle;
-    covariate_observation_table<system> context;
-
-    covariate_empirical_table<system> empirical_quality;
-    covariate_empirical_table<system> empirical_cycle;
-    covariate_empirical_table<system> empirical_context;
-
-    covariate_empirical_table<system> read_group;
+    covariate_packer_table(covariate_observation_table<system> table)
+        : table(table)
+    { }
 };
 
-template <target_system system> void gather_covariates(firepony_context<system>& context, const alignment_batch<system>& batch);
-template <target_system system> void postprocess_covariates(firepony_context<system>& context);
-template <target_system system> void output_covariates(firepony_context<system>& context);
-template <target_system system> void compute_empirical_quality_scores(firepony_context<system>& context);
+template <typename covariate_packer, target_system system>
+covariate_packer_table<system, covariate_packer> make_packer_table(covariate_observation_table<system> table)
+{
+    return covariate_packer_table<system, covariate_packer>(table);
+}
 
 } // namespace firepony

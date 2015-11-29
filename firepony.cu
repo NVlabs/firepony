@@ -131,7 +131,15 @@ static std::vector<firepony_pipeline *> enumerate_compute_devices(void)
     compute_device_count = ret.size();
     if (command_line_options.enable_tbb)
     {
-        uint32 num_threads = lift::compute_device_host::available_threads() - (compute_device_count + 1);
+        uint32 num_threads;
+
+        if (command_line_options.cpu_threads == -1)
+        {
+            num_threads = lift::compute_device_host::available_threads() - (compute_device_count + 1);
+            command_line_options.cpu_threads = num_threads;
+        } else {
+            num_threads = command_line_options.cpu_threads;
+        }
 
         firepony_pipeline *dev;
         dev = firepony_pipeline::create(new lift::compute_device_host(num_threads));

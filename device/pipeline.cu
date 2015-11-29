@@ -40,7 +40,7 @@
 #include "baq.h"
 #include "firepony_context.h"
 #include "cigar.h"
-#include "covariates.h"
+#include "covariates/covariates.h"
 #include "fractional_errors.h"
 #include "read_filters.h"
 #include "read_group_table.h"
@@ -203,6 +203,16 @@ static void output_header(firepony_context<system>& context)
     }
 }
 
+// called once per device after the last batch has gone through processing
+template <target_system system>
+void firepony_pipeline_end(firepony_context<system>& context)
+{
+    flush_covariates(context);
+}
+INSTANTIATE(firepony_pipeline_end);
+
+// postprocessing happens only once on an arbitrarly-chosen device
+// this is called after all covariate data has been gathered
 template <target_system system>
 void firepony_postprocess(firepony_context<system>& context)
 {

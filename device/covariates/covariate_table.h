@@ -30,7 +30,12 @@
 
 #pragma once
 
-#include "../types.h"
+#include "../../types.h"
+#include "../../command_line.h"
+
+#include <map>
+
+#include <lift/sys/host/compute_device_host.h>
 
 namespace firepony {
 
@@ -57,12 +62,20 @@ struct covariate_empirical_value
 // covariate table
 // stores a list of key-value pairs, where the key is a covariate_key and the value is either covariate_observation_value or covariate_empirical_value
 template <target_system system, typename covariate_value>
-struct covariate_table
+struct covariate_table_base
 {
     typedef covariate_value value_type;
 
     persistent_allocation<system, covariate_key> keys;
     persistent_allocation<system, covariate_value> values;
+
+    // set up the covariate table prior to generating keys into it
+    virtual void init(void)
+    { }
+
+    // post-process accumulated table data to generate key/value pairs
+    virtual void flush(void)
+    { }
 
     void resize(size_t size)
     {
@@ -76,8 +89,14 @@ struct covariate_table
         return keys.size();
     }
 
+    void push_back(const covariate_key& key, const covariate_value& value)
+    {
+        keys.push_back(key);
+        values.push_back(value);
+    }
+
     template <target_system other_system>
-    void copyfrom(covariate_table<other_system, covariate_value>& other)
+    void copyfrom(covariate_table_base<other_system, covariate_value>& other)
     {
         keys.resize(other.keys.size());
         values.resize(other.values.size());
@@ -88,7 +107,7 @@ struct covariate_table
 
     // cross-device table concatenation
     template <target_system other_system>
-    void concat(const lift::compute_device& my_device, const lift::compute_device& other_device, covariate_table<other_system, covariate_value>& other)
+    void concat(const lift::compute_device& my_device, const lift::compute_device& other_device, covariate_table_base<other_system, covariate_value>& other)
     {
         size_t off = size();
 
@@ -126,6 +145,73 @@ struct covariate_table
         };
 
         return v;
+    }
+};
+
+// covariate table implementation
+template <target_system system, typename covariate_value>
+struct covariate_table
+{ };
+
+template <typename covariate_value>
+struct covariate_table<cuda, covariate_value> : public covariate_table_base<cuda, covariate_value>
+{
+    typedef covariate_table_base<cuda, covariate_value> base;
+    using base::base;
+};
+
+template <typename covariate_value>
+struct covariate_table<host, covariate_value> : public covariate_table_base<host, covariate_value>
+{
+    typedef covariate_table_base<host, covariate_value> base;
+    using base::base;
+
+    // per-thread storage for covariate table
+    typedef std::map<covariate_key, covariate_value> covariate_map;
+    // maps thread-id to a covariate map
+    // pointers are used here because this code needs to be able to compile for GPU as well
+    persistent_allocation<host, covariate_map *> key_value_maps;
+
+    virtual void init(void) override
+    {
+        if (key_value_maps.size() == 0)
+        {
+            key_value_maps.resize(command_line_options.cpu_threads);
+            for(uint32 i = 0; i < key_value_maps.size(); i++)
+            {
+                key_value_maps[i] = new covariate_map;
+            }
+        }
+    }
+
+    virtual void flush(void) override
+    {
+        uint64 count = 0;
+        uint64 map_count = 0;
+
+        for(auto *map : key_value_maps)
+        {
+            map_count++;
+            for(const auto& node : *map)
+            {
+                count++;
+                base::push_back(node.first, node.second);
+            }
+
+            map->clear();
+        }
+    }
+
+    covariate_observation_value& value(const uint32 tid, const covariate_key key)
+    {
+        auto& map = *key_value_maps[tid];
+
+        if (map.find(key) == map.end())
+        {
+            map[key] = { 0, 0 };
+        }
+
+        return map[key];
     }
 };
 

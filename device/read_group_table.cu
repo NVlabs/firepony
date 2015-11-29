@@ -29,7 +29,7 @@
  */
 
 #include "firepony_context.h"
-#include "covariate_table.h"
+#include "covariates/covariate_table.h"
 #include "read_group_table.h"
 #include "empirical_quality.h"
 

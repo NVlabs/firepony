@@ -28,8 +28,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "../types.h"
-#include "firepony_context.h"
+#include "../../types.h"
+#include "../firepony_context.h"
 #include "covariates.h"
 #include "covariate_table.h"
 
@@ -41,10 +41,10 @@
 namespace firepony {
 
 template <target_system system, typename covariate_value>
-void covariate_table<system, covariate_value>::sort(allocation<system, covariate_key>& temp_keys,
-                                                    allocation<system, covariate_value>& temp_values,
-                                                    allocation<system, uint8>& temp_storage,
-                                                    uint32 num_key_bits)
+void covariate_table_base<system, covariate_value>::sort(allocation<system, covariate_key>& temp_keys,
+                                                         allocation<system, covariate_value>& temp_values,
+                                                         allocation<system, uint8>& temp_storage,
+                                                         uint32 num_key_bits)
 {
     if (this->keys.size())
     {
@@ -88,9 +88,9 @@ struct covariate_value_sum<covariate_empirical_value>
 };
 
 template <target_system system, typename covariate_value>
-void covariate_table<system, covariate_value>::pack(allocation<system, covariate_key>& temp_keys,
-                                                    allocation<system, covariate_value>& temp_values,
-                                                    allocation<system,uint8>& temp_storage)
+void covariate_table_base<system, covariate_value>::pack(allocation<system, covariate_key>& temp_keys,
+                                                         allocation<system, covariate_value>& temp_values,
+                                                         allocation<system,uint8>& temp_storage)
 {
     temp_keys.resize(this->size());
     temp_values.resize(this->size());
