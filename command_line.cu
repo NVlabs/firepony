@@ -128,6 +128,7 @@ void parse_command_line(int argc, char **argv)
             { "gpu-only", no_argument, NULL, 'g' },
             { "cpu-only", no_argument, NULL, 'c' },
             { "cpu-threads", required_argument, NULL, 't' },
+            { "null-pipeline", no_argument, NULL, 'p' },
             { 0 },
     };
 
@@ -217,6 +218,11 @@ void parse_command_line(int argc, char **argv)
                 usage();
             }
 
+            break;
+
+        case 'p':
+            // null-pipeline
+            command_line_options.null_pipeline = true;
             break;
 
         case '?':

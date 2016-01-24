@@ -67,6 +67,8 @@ struct runtime_options
 
     // verbose mode
     bool verbose;
+    // null pipeline mode (perform no compute work)
+    bool null_pipeline;
 
     void disable_all_backends(void)
     {
@@ -96,6 +98,7 @@ struct runtime_options
         try_mmap = false;
 
         verbose = false;
+        null_pipeline = false;
     }
 };
 

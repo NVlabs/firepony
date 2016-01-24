@@ -370,17 +370,20 @@ int main(int argc, char **argv)
 
     fprintf(stderr, "\n");
 
-    // we pick the first device to do the postprocessing on
-    auto d = compute_devices[0];
-    if (compute_devices.size() > 1)
+    if (!command_line_options.null_pipeline)
     {
-        for(uint32 i = 1; i < compute_devices.size(); i++)
+        // we pick the first device to do the postprocessing on
+        auto d = compute_devices[0];
+        if (compute_devices.size() > 1)
         {
-            d->gather_intermediates(compute_devices[i]);
+            for(uint32 i = 1; i < compute_devices.size(); i++)
+            {
+                d->gather_intermediates(compute_devices[i]);
+            }
         }
-    }
 
-    d->postprocess();
+        d->postprocess();
+    }
 
     wall_clock.stop();
 
@@ -391,17 +394,20 @@ int main(int argc, char **argv)
         aggregate_stats += d->statistics();
     }
 
-    fprintf(stderr, "%lu reads filtered out of %lu (%f%%)\n",
-            aggregate_stats.filtered_reads,
-            aggregate_stats.total_reads,
-            float(aggregate_stats.filtered_reads) / float(aggregate_stats.total_reads) * 100.0);
+    if (!command_line_options.null_pipeline)
+    {
+        fprintf(stderr, "%lu reads filtered out of %lu (%f%%)\n",
+                aggregate_stats.filtered_reads,
+                aggregate_stats.total_reads,
+                float(aggregate_stats.filtered_reads) / float(aggregate_stats.total_reads) * 100.0);
 
-    fprintf(stderr, "computed base alignment quality for %lu reads out of %lu (%f%%)\n",
-            aggregate_stats.baq_reads,
-            aggregate_stats.total_reads - aggregate_stats.filtered_reads,
-            float(aggregate_stats.baq_reads) / float(aggregate_stats.total_reads - aggregate_stats.filtered_reads) * 100.0);
+        fprintf(stderr, "computed base alignment quality for %lu reads out of %lu (%f%%)\n",
+                aggregate_stats.baq_reads,
+                aggregate_stats.total_reads - aggregate_stats.filtered_reads,
+                float(aggregate_stats.baq_reads) / float(aggregate_stats.total_reads - aggregate_stats.filtered_reads) * 100.0);
 
-    fprintf(stderr, "\n");
+        fprintf(stderr, "\n");
+    }
 
     fprintf(stderr, "wall clock times:\n");
     fprintf(stderr, " data I/O (reference + dbSNP): %f\n", data_io.elapsed_time());
@@ -411,27 +417,31 @@ int main(int argc, char **argv)
     fprintf(stderr, "alignment data loader:\n");
     fprintf(stderr, " SAM/BAM decoding: %f\n", reader.get_times().htslib.elapsed_time());
     fprintf(stderr, " data shuffling: %f\n", reader.get_times().repack.elapsed_time());
+    fprintf(stderr, "total: %f\n", reader.get_times().htslib.elapsed_time() + reader.get_times().repack.elapsed_time());
     fprintf(stderr, "\n");
 
-    if (compute_devices.size() > 1)
-        fprintf(stderr, "aggregate compute times:\n");
-    else
-        fprintf(stderr, "compute times:\n");
-
-    print_statistics(wall_clock, aggregate_stats, compute_devices.size());
-
-    if (compute_devices.size() > 1)
+    if (!command_line_options.null_pipeline)
     {
-        fprintf(stderr, "\n");
-        fprintf(stderr, "per-device compute times:\n");
+        if (compute_devices.size() > 1)
+            fprintf(stderr, "aggregate compute times:\n");
+        else
+            fprintf(stderr, "compute times:\n");
 
-        for(uint32 i = 0; i < compute_devices.size(); i++)
+        print_statistics(wall_clock, aggregate_stats, compute_devices.size());
+
+        if (compute_devices.size() > 1)
         {
-            fprintf(stderr, " device %d: %s\n", i, compute_devices[i]->get_name().c_str());
-            print_statistics(wall_clock, compute_devices[i]->statistics());
+            fprintf(stderr, "\n");
+            fprintf(stderr, "per-device compute times:\n");
+
+            for(uint32 i = 0; i < compute_devices.size(); i++)
+            {
+                fprintf(stderr, " device %d: %s\n", i, compute_devices[i]->get_name().c_str());
+                print_statistics(wall_clock, compute_devices[i]->statistics());
+            }
         }
+        fprintf(stderr, "\n");
     }
-    fprintf(stderr, "\n");
 
     reader.join();
 

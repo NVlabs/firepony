@@ -204,24 +204,28 @@ private:
                 break;
             }
 
-            // download/evict reference and dbsnp segments
-            reference->update_resident_set(*host_reference, h_batch->chromosome_map);
-            dbsnp->update_resident_set(*host_dbsnp, h_batch->chromosome_map);
+            if (!command_line_options.null_pipeline)
+            {
+                // download/evict reference and dbsnp segments
+                reference->update_resident_set(*host_reference, h_batch->chromosome_map);
+                dbsnp->update_resident_set(*host_dbsnp, h_batch->chromosome_map);
 
-            // download alignment data to the device
-            batch->download(h_batch);
+                // download alignment data to the device
+                batch->download(h_batch);
 
-            // update context database pointers
-            context->update_databases(*reference, *dbsnp);
+                // update context database pointers
+                context->update_databases(*reference, *dbsnp);
 
-            // process the batch
-            firepony_process_batch(*context, *batch);
+                // process the batch
+                firepony_process_batch(*context, *batch);
+            }
 
             // return it to the reader for reuse
             reader->retire_batch(h_batch);
         }
 
-        firepony_pipeline_end(*context);
+        if (!command_line_options.null_pipeline)
+            firepony_pipeline_end(*context);
 
         statistics().io.add(io_timer);
     }
